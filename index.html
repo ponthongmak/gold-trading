@@ -148,10 +148,10 @@ details{margin-top:8px;font-size:12.5px} details summary{cursor:pointer;color:va
 .card .btable td,.card .btable th{padding:6px 8px}
 .modelhead{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
 .modelhead .btn{padding:3px 10px;font-size:12px}
-.mpick{display:flex;flex-wrap:wrap;gap:8px 16px;margin:8px 0 4px;font-size:13px}
-.mpick label{display:flex;gap:6px;align-items:center;color:var(--muted);font-weight:600;font-size:12px;min-width:0;max-width:100%}
-.chartbar #refSeg button small{display:block;font-size:10.5px;font-weight:500;opacity:.75;font-variant-numeric:tabular-nums}
-.mpick select{font:inherit;font-size:13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:5px 8px;max-width:calc(100vw - 120px);min-width:0;text-overflow:ellipsis}
+.setbar{margin-bottom:8px;border-left:4px solid var(--proj)}
+.setbar .settitle{font-size:11px;letter-spacing:.06em;text-transform:uppercase;width:100%}
+select.bsel{font:inherit;font-size:13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:5px 8px;max-width:100%;min-width:0;text-overflow:ellipsis}
+.setbar .grp{min-width:0;max-width:100%}
 #allModels{margin-top:6px}
 .mpanel{margin-bottom:12px}
 .mcard{background:var(--surface);border:1px solid var(--border);border-left:5px solid var(--stale);border-radius:10px;padding:12px 14px}
@@ -251,10 +251,14 @@ footer a{color:var(--muted)}
     <div class="cards" id="cards"></div>
     <div class="cards2" id="dayCards"></div>
 
-    <div class="bar chartbar">
-      <div class="grp"><span class="lbl" title="History used to fit the forecast model and to find the buy/sell hours">Training period</span>
-        <div class="seg" id="refSeg"><button data-v="7">1 week</button><button data-v="14">2 weeks</button><button data-v="30">1 month</button><button data-v="91">3 months</button><button data-v="182">6 months</button></div></div>
+    <div class="bar setbar">
+      <span class="lbl settitle">Forecast settings</span>
+      <div class="grp"><span class="lbl">Model</span><select id="famSel" class="bsel"></select></div>
+      <div class="grp" id="setGrp"><span class="lbl">Setting</span><select id="setSel" class="bsel"></select></div>
+      <div class="grp"><span class="lbl" title="History used to fit the forecast model and to find the buy/sell hours">Training period</span><select id="refSel" class="bsel"></select></div>
       <label class="chk"><input type="checkbox" id="wdChk"> Same weekday only</label>
+    </div>
+    <div class="bar chartbar">
       <div class="grp"><span class="lbl">Bars</span>
         <div class="seg" id="barSeg"><button data-v="auto">Auto</button><button data-v="5">5m</button><button data-v="10">10m</button><button data-v="30">30m</button><button data-v="60">1h</button></div></div>
       <div class="grp"><span class="lbl">Y</span>
@@ -793,8 +797,9 @@ function scanSettings(){
 // Works on the hourly series (close of the last 5-minute bar in each trading hour). Every forecast in the scoring
 // uses only data before its origin. Scoring: one forecast per trading hour over the last 20 trading days, 1–24
 // trading hours ahead; the lowest mean absolute error (MAE) wins. No API calls: stored data only.
-const LOOKBACK = { '1w':7, '2w':14, '1m':30, '3m':91, '6m':182 }, DRIFT_N = { '1w':5, '2w':10, '1m':20, '3m':60, '6m':120 }, MODEL_V = 2,
-  PERIOD_NAME = { '1w':'1 week', '2w':'2 weeks', '1m':'1 month', '3m':'3 months', '6m':'6 months' }, MH = 24, SCORE_DAYS = 20, MARGIN = 0.01, T_MIN = 2;
+const VAL_DAYS = 15, TEST_DAYS = 5;                       // Auto chooses on the 15 trading days before the 5 test days
+const LOOKBACK = { '1w':7, '2w':14, '1m':30, '3m':91, '6m':182 }, DRIFT_N = { '1w':5, '2w':10, '1m':20, '3m':60, '6m':120 }, MODEL_V = 3,
+  PERIOD_NAME = { '1w':'1 week', '2w':'2 weeks', '1m':'1 month', '3m':'3 months', '6m':'6 months' }, MH = 24, MARGIN = 0.01, T_MIN = 2;
 const FAM = {
   naive:{ name:'No change', why:'The latest price, held flat. Hard to beat on short horizons.' },
   pattern:{ name:'Daily pattern', why:'Typical intraday shape + damped trend (the original method).' },
@@ -966,27 +971,34 @@ function modelLabel(id, noPeriod){
   return parts.join(' · ') || (noPeriod ? 'standard' : '—');
 }
 // Score one model: every trading hour of the scoring days as origin, 1–24 trading hours ahead.
-function scoreModel(H, M, origins){
-  const abs = Array.from({ length:MH + 1 }, () => []), byDay = new Map(); let se = 0, n = 0;
+// Errors are kept separately for validation origins (before `testFrom`) and test origins (from `testFrom`).
+function scoreModel(H, M, origins, testFrom){
+  const part = () => ({ abs:Array.from({ length:MH + 1 }, () => []), byDay:new Map(), se:0, n:0, o:0 }), P = { val:part(), test:part() };
   for(const j of origins){
     const tg = []; let k = 0;
     for(let h = 1; h <= MH && j + h < H.y.length; h++){ if(H.date[j+h] !== H.date[j+h-1]) k++; tg.push({ h, s:H.slot[j+h], k }); }
     if(!tg.length) continue;
     const f = predict(M, H, j, { price:H.y[j], date:H.date[j], s0:H.slot[j] }, tg);
     if(!f) return null;                                                  // every model must cover every origin
-    const dd = byDay.get(H.date[j]) || byDay.set(H.date[j], [0, 0]).get(H.date[j]);
-    tg.forEach((g, i) => { const e = f[i] - H.y[j + g.h]; abs[g.h].push(Math.abs(e)); se += e*e; n++; dd[0] += Math.abs(e); dd[1]++; });
+    const X = H.date[j] >= testFrom ? P.test : P.val; X.o++;
+    const dd = X.byDay.get(H.date[j]) || X.byDay.set(H.date[j], [0, 0]).get(H.date[j]);
+    tg.forEach((g, i) => { const e = f[i] - H.y[j + g.h]; X.abs[g.h].push(Math.abs(e)); X.se += e*e; X.n++; dd[0] += Math.abs(e); dd[1]++; });
   }
-  if(!n) return null;
-  const all = abs.flat(), q = (a, p) => a.length ? quantile(a, p) : null;
-  return { mae:all.reduce((x, y) => x + y, 0)/n, rmse:Math.sqrt(se/n), n:origins.length, daily:new Map([...byDay].map(([d, v]) => [d, v[0]/v[1]])),
-    e80:abs.map(a => q(a, .8)), e95:abs.map(a => q(a, .95)) };
+  if(!P.val.n || !P.test.n) return null;
+  const q = (a, p) => a.length ? quantile(a, p) : null;
+  const sum = X => ({ mae:X.abs.flat().reduce((x, y) => x + y, 0)/X.n, rmse:Math.sqrt(X.se/X.n), n:X.o, daily:new Map([...X.byDay].map(([d, v]) => [d, v[0]/v[1]])) });
+  const v = sum(P.val), t = sum(P.test);
+  return { mae:t.mae, rmse:t.rmse, n:t.n, daily:t.daily, vmae:v.mae, vdaily:v.daily, vn:v.n,
+    e80:P.test.abs.map(a => q(a, .8)), e95:P.test.abs.map(a => q(a, .95)) };
 }
 async function retrainAndSelect(){
   if(S.training) return; const H = hourly(); if(H.y.length < 200) return;
   S.training = true; renderPanels();
   try{
-    const dates = [...new Set(H.date)], scoreDates = dates.slice(-SCORE_DAYS), first = idxOfDate(H, scoreDates[0]);
+    // Count only full trading days (Saturday 00:00–04:00 Thai is a short stub of Friday's New York session).
+    const cnt = new Map(); H.date.forEach(d => cnt.set(d, (cnt.get(d) || 0) + 1));
+    const dates = [...cnt.keys()].filter(d => cnt.get(d) >= 6), scoreDates = dates.slice(-(VAL_DAYS + TEST_DAYS)), first = idxOfDate(H, scoreDates[0]);
+    const testDates = scoreDates.slice(-TEST_DAYS), testFrom = testDates[0];
     const origins = []; for(let j = first; j < H.y.length - 1; j++) origins.push(j);
     const res = [], missing = [], keep = S.model; S.model = null;
     let t0 = performance.now();
@@ -994,28 +1006,28 @@ async function retrainAndSelect(){
       const M = parseModel(id);
       // The look-back must be fully stored before the first scoring day (a few days' slack for weekends).
       if(M.L && H.date[0] > addDays(scoreDates[0], -LOOKBACK[M.L] + 4)){ missing.push(id); continue; }
-      const r = scoreModel(H, M, origins); if(r) res.push({ id, ...r }); else missing.push(id);
+      const r = scoreModel(H, M, origins, testFrom); if(r) res.push({ id, ...r }); else missing.push(id);
       if(performance.now() - t0 > 40){ await sleep(0); t0 = performance.now(); }   // keep the page responsive
     }
     // One ensemble per training period: No change + the best Shrunk / ETS / AR fitted on that period.
     const ensBy = {};
     for(const L in LOOKBACK){
-      const bestOf = fam => res.filter(r => r.id.startsWith(`${fam}:${L}:`)).sort((a,b) => a.mae - b.mae)[0];
+      const bestOf = fam => res.filter(r => r.id.startsWith(`${fam}:${L}:`)).sort((a,b) => a.vmae - b.vmae)[0];   // chosen on validation
       ensBy[L] = ['naive', ...['shrunk','ets','ar'].map(bestOf).filter(Boolean).map(r => r.id)];
     }
     S.model = { ensBy };
-    for(const L in LOOKBACK){ if(ensBy[L].length < 2){ missing.push('ens:' + L); continue; } const re = scoreModel(H, parseModel('ens:' + L), origins); if(re) res.push({ id:'ens:' + L, ...re }); else missing.push('ens:' + L); }
+    for(const L in LOOKBACK){ if(ensBy[L].length < 2){ missing.push('ens:' + L); continue; } const re = scoreModel(H, parseModel('ens:' + L), origins, testFrom); if(re) res.push({ id:'ens:' + L, ...re }); else missing.push('ens:' + L); }
     S.model = keep;
     const naive = res.find(r => r.id === 'naive');
-    // Consistency vs "no change": paired t-statistic of the daily error differences (positive = better than no change).
+    // skill = test (shown). vskill and t = validation (used by Auto): paired t-statistic of the daily error differences vs no change.
     res.forEach(r => {
-      r.skill = 1 - r.mae/naive.mae;
-      const d = [...naive.daily].map(([k, v]) => v - (r.daily.get(k) ?? v)), m = mean(d), sd = Math.sqrt(d.reduce((a, x) => a + (x - m)**2, 0)/Math.max(1, d.length - 1));
+      r.skill = 1 - r.mae/naive.mae; r.vskill = 1 - r.vmae/naive.vmae;
+      const d = [...naive.vdaily].map(([k, v]) => v - (r.vdaily.get(k) ?? v)), m = mean(d), sd = Math.sqrt(d.reduce((a, x) => a + (x - m)**2, 0)/Math.max(1, d.length - 1));
       r.t = sd > 0 ? m/(sd/Math.sqrt(d.length)) : 0;
     });
     res.sort((a,b) => a.mae - b.mae);
-    // A model replaces "no change" only if it is at least 1% more accurate AND better on most days (t ≥ 2); otherwise the gain is luck.
-    const pick = list => list.find(r => r.id === 'naive' || (r.skill >= MARGIN && r.t >= T_MIN)).id;
+    // Auto (on validation days only): a model replaces "no change" only if it is ≥ 1% more accurate AND better on most days (t ≥ 2).
+    const pick = list => [...list].sort((a,b) => a.vmae - b.vmae).find(r => r.id === 'naive' || (r.vskill >= MARGIN && r.t >= T_MIN)).id;
     const auto = pick(res), autoBy = {};
     for(const L in LOOKBACK) autoBy[L] = pick(res.filter(r => !periodOf(r.id) || periodOf(r.id) === L));
     // Freeze every model's parameters, fitted on the look-back that ends now; they stay fixed until the next update.
@@ -1026,8 +1038,9 @@ async function retrainAndSelect(){
       const kind = { ets:M.kind, ar:M.p, arima:'' }[M.fam];
       if(kind !== undefined){ const f = fitFor(H, M.fam, M.L, next, kind); if(f){ const { lo, sse, ...p } = f; params[[M.fam, M.L, kind].join('|')] = p; } }
     }
-    const saved = { v:MODEL_V, date:thai().date, at:nowMs(), oldest:dates[0], from:scoreDates[0], to:scoreDates[scoreDates.length-1], origins:origins.length, auto, autoBy, ensBy, missing, params,
-      board:res.map(r => ({ id:r.id, mae:r.mae, rmse:r.rmse, skill:r.skill, t:r.t, e80:r.e80.map(v => v == null ? v : r4(v)), e95:r.e95.map(v => v == null ? v : r4(v)) })) };
+    const saved = { v:MODEL_V, date:thai().date, at:nowMs(), oldest:H.date[0], from:testFrom, to:scoreDates[scoreDates.length-1], origins:naive.n,
+      valFrom:scoreDates[0], valTo:scoreDates[scoreDates.length - TEST_DAYS - 1], vOrigins:naive.vn, auto, autoBy, ensBy, missing, params,
+      board:res.map(r => ({ id:r.id, mae:r.mae, rmse:r.rmse, skill:r.skill, vmae:r.vmae, vskill:r.vskill, t:r.t, e80:r.e80.map(v => v == null ? v : r4(v)), e95:r.e95.map(v => v == null ? v : r4(v)) })) };
     store.set(K.model, JSON.stringify(saved));
     applyModel(saved);
   } finally { S.training = false; }
@@ -1048,25 +1061,36 @@ function swapPeriod(id, L){
   const alt = S.model.board.filter(r => r.id.startsWith(M.fam + ':' + L)).sort((a,b) => a.mae - b.mae)[0];
   return alt ? alt.id : id;
 }
-// Training-period bar: each button shows the tested error of the model in use when fitted on that period.
-function renderPeriodBar(){
-  const m = S.model, L0 = refL();
-  document.querySelectorAll('#refSeg button').forEach(b => {
-    const L = Object.keys(LOOKBACK).find(k => LOOKBACK[k] === +b.dataset.v), name = PERIOD_NAME[L];
+// Forecast settings bar above the chart: Model, Setting and Training period dropdowns (errors = test days only).
+function renderModelBar(){
+  const m = S.model, L0 = refL(), fam = id => id.split(':')[0];
+  const per = Object.keys(LOOKBACK).map(L => {
     let sub = '', dis = false;
     if(m){
-      const id = m.autoMode === 'period' ? m.autoBy[L] : m.autoMode === 'all' ? m.id : swapPeriod(m.id, L);
-      const r = m.board.find(x => x.id === id);
-      if(periodOf(m.id) && !m.autoMode && periodOf(id) !== L){ sub = 'needs data'; dis = true; }
-      else if(r) sub = usd(r.mae);
+      const id = m.autoMode === 'period' ? m.autoBy[L] : m.autoMode === 'all' ? m.id : swapPeriod(m.id, L), r = m.board.find(x => x.id === id);
+      if(periodOf(m.id) && !m.autoMode && periodOf(id) !== L){ sub = 'needs more data'; dis = true; } else if(r) sub = 'test error ' + usd(r.mae);
     }
-    b.innerHTML = `${name}${sub ? `<small>${sub}</small>` : ''}`; b.disabled = dis;
-  });
-  const h = $('periodHint'); if(!h) return;
-  if(!m){ h.textContent = `Buy/sell hours from the typical daily pattern of the last ${PERIOD_NAME[L0]}.`; return; }
-  const M = parseModel(m.id), nm = FAM[M.fam].name + (M.fam === 'naive' || M.fam === 'seasonal' ? '' : ` (${modelLabel(m.id, true)})`);
-  h.innerHTML = (M.L ? `Forecast: <b>${nm}</b> fitted on the last <b>${PERIOD_NAME[M.L]}</b>` : `Forecast: <b>${nm}</b> (uses no history, so the period does not change it)`) +
-    (m.autoMode === 'all' && M.L && M.L !== L0 ? ` · Auto (any period) chose ${PERIOD_NAME[M.L]}` : '') +
+    return `<option value="${LOOKBACK[L]}" ${L === L0 ? 'selected' : ''} ${dis ? 'disabled' : ''}>${PERIOD_NAME[L]}${sub ? ' — ' + sub : ''}</option>`;
+  }).join('');
+  $('refSel').innerHTML = per;
+  if(!m){
+    $('famSel').innerHTML = `<option>${S.training ? 'Training models…' : 'Not trained yet'}</option>`; $('famSel').disabled = true; $('setGrp').classList.add('hide');
+    $('periodHint').textContent = `Buy/sell hours from the typical daily pattern of the last ${PERIOD_NAME[L0]}.`; return;
+  }
+  $('famSel').disabled = false;
+  const cur = m.id, curFam = fam(cur), Lm = periodOf(cur) || L0, inP = id => !periodOf(id) || periodOf(id) === Lm;
+  $('famSel').innerHTML = `<option value="auto" ${m.autoMode === 'period' ? 'selected' : ''}>Auto — best for this period</option>` +
+    `<option value="autoAll" ${m.autoMode === 'all' ? 'selected' : ''}>Auto — best of any period</option>` + Object.keys(FAM).map(f => {
+      const bestR = m.board.filter(r => fam(r.id) === f && inP(r.id)).sort((a,b) => a.mae - b.mae)[0];
+      return `<option value="${f}" ${m.manual && f === curFam ? 'selected' : ''} ${bestR ? '' : 'disabled'}>${FAM[f].name}${bestR ? ' — ' + usd(bestR.mae) : ' — needs more data'}</option>`;
+    }).join('');
+  const opts = m.board.filter(r => fam(r.id) === curFam && inP(r.id)).sort((a,b) => a.mae - b.mae);
+  $('setGrp').classList.toggle('hide', !m.manual || opts.length < 2);
+  $('setSel').innerHTML = opts.map(r => `<option value="${r.id}" ${r.id === cur ? 'selected' : ''}>${modelLabel(r.id, true)} — ${usd(r.mae)} · ${r.id === 'naive' ? 'baseline' : pct(r.skill*100, 1)}</option>`).join('') +
+    (m.missing || []).filter(id => fam(id) === curFam && inP(id)).map(id => `<option disabled>${modelLabel(id, true)} — needs more data</option>`).join('');
+  const M = parseModel(cur), nm = FAM[M.fam].name + (M.fam === 'naive' || M.fam === 'seasonal' ? '' : ` (${modelLabel(cur, true)})`);
+  $('periodHint').innerHTML = (M.L ? `Forecast: <b>${nm}</b> fitted on the last <b>${PERIOD_NAME[M.L]}</b>` : `Forecast: <b>${nm}</b> (uses no history, so the period does not change it)`) +
+    ` · test error ${usd(m.row.mae)} over the last ${TEST_DAYS} trading days` + (m.autoMode === 'all' && M.L && M.L !== L0 ? ` · Auto chose ${PERIOD_NAME[M.L]}` : '') +
     ` · buy/sell hours from ${PERIOD_NAME[L0]} of daily patterns.`;
 }
 // Models are updated by the user ("Update models", about monthly). Only the very first training runs by itself.
@@ -1076,7 +1100,7 @@ function maybeRetrain(){
 }
 async function updateModels(){
   const n = candidateIds().length + 1;
-  if(!confirm(`Update models?\n\nRe-fit all ${n} models on the stored history (up to 6 months), test each one on the last ${SCORE_DAYS} trading days, and pick the most accurate.\n\nUses stored data only (no API calls) and takes a few seconds. Your manual choice, if any, is kept.`)) return;
+  if(!confirm(`Update models?\n\nRe-fit all ${n} models on the stored history (up to 6 months), choose the best on ${VAL_DAYS} trading days, then show every model's error on the last ${TEST_DAYS} trading days (test).\n\nUses stored data only (no API calls) and takes a few seconds. Your manual choice, if any, is kept.`)) return;
   if(S.meta.oldestBar && !S.meta.limitReached && S.meta.oldestBar.slice(0,10) > targetDate()) await sync();   // fetch older history first if missing
   await retrainAndSelect();
 }
@@ -1562,34 +1586,23 @@ function modelCard(){
   const auto = !m.manual, cur = m.id, curFam = fam(cur), L0 = periodOf(cur) || refL();
   const age = Math.floor((dayEpoch(thai().date) - dayEpoch(m.date))/86400), at = thai(m.at);
   const due = age >= 30 ? ` <span class="tag amber">Update recommended (monthly)</span>` : '';
-  const famOpts = `<option value="auto" ${m.autoMode === 'period' ? 'selected' : ''}>Auto — best for this training period</option>` +
-    `<option value="autoAll" ${m.autoMode === 'all' ? 'selected' : ''}>Auto — best of any period</option>` + Object.keys(FAM).map(f => {
-    const rs = m.board.filter(r => fam(r.id) === f && (!periodOf(r.id) || periodOf(r.id) === L0)), bestR = rs.sort((a,b) => a.mae - b.mae)[0];
-    return `<option value="${f}" ${!auto && f === curFam ? 'selected' : ''} ${bestR ? '' : 'disabled'}>${FAM[f].name}${bestR ? ` — ${usd(bestR.mae)}` : ' — needs more data'}</option>`;
-  }).join('');
-  const setFam = curFam;
-  const inPeriod = id => fam(id) === setFam && (!periodOf(id) || periodOf(id) === L0);
-  const setOpts = [...m.board.filter(r => inPeriod(r.id)).sort((a,b) => a.mae - b.mae).map(r =>
-      `<option value="${r.id}" ${r.id === cur ? 'selected' : ''}>${modelLabel(r.id, true)} — error ${usd(r.mae)} · ${sk(r)}</option>`),
-    ...(m.missing || []).filter(inPeriod).map(id => `<option disabled>${modelLabel(id, true)} — needs more data</option>`)].join('');
   const list = S.allPeriods ? m.board : m.board.filter(r => !periodOf(r.id) || periodOf(r.id) === L0);
   const rows = list.map((r, i) => `<tr class="mrow ${r.id === cur ? 'sel' : ''}" data-model="${r.id}" title="${FAM[fam(r.id)].why} Click to use.">` +
     `<td>${i + 1}</td><td>${r.id === cur ? '<span class="best">★</span> ' : ''}${name(r.id)}</td><td class="m">${modelLabel(r.id, true)}</td><td class="m">${periodOf(r.id) ? PERIOD_NAME[periodOf(r.id)] : '—'}</td><td>${usd(r.mae)}</td><td>${usd(r.rmse)}</td>` +
-    `<td class="${r.skill > 0.001 ? 'up' : r.skill < -0.001 ? 'down' : ''}">${sk(r)}${r.id !== 'naive' && r.skill >= MARGIN ? (r.t >= T_MIN ? ' ✓' : ' <span class="m">(luck?)</span>') : ''}</td></tr>`).join('');
+    `<td class="${r.skill > 0.001 ? 'up' : r.skill < -0.001 ? 'down' : ''}">${sk(r)}${r.id !== 'naive' && r.vskill >= MARGIN && r.t >= T_MIN ? ' ✓' : ''}</td></tr>`).join('');
   const why = !auto ? 'your choice' : (m.autoMode === 'all' ? 'Auto (any period)' : `Auto (${PERIOD_NAME[refL()]})`) + (cur === 'naive' ? ': no model beat it reliably' : ': most accurate');
   return `<div class="card wide"><div class="modelhead"><div class="k">Forecast model · in use: <span style="color:var(--text)">★ ${name(cur)} ${cur.includes(':') ? '(' + modelLabel(cur) + ')' : ''}</span> · ${why}${due}</div>${upd}</div>` +
-    `<div class="mpick"><label>Model <select id="famSel">${famOpts}</select></label>` +
-    (auto ? '' : `<label>Setting <select id="setSel">${setOpts}</select></label>`) + `<span class="hint">Training period: set it on the bar above the chart.</span></div>` +
-    `<div class="s">${FAM[curFam].why} Tested error ${usd(m.row.mae)} (RMSE ${usd(m.row.rmse)}) · ${cur === 'naive' ? 'the baseline' : sk(m.row) + ' vs no change'}.</div>` +
-    `<details id="allModels" ${S.allOpen ? 'open' : ''}><summary>${S.allPeriods ? `All ${m.board.length} models, settings and periods` : `All ${list.length} models for ${PERIOD_NAME[L0]}`}, ranked by tested error</summary>` +
+    `<div class="s" style="margin-top:4px">${FAM[curFam].why} <b>Test error ${usd(m.row.mae)}</b> (RMSE ${usd(m.row.rmse)}) · ${cur === 'naive' ? 'the baseline' : sk(m.row) + ' vs no change'}. Change the model, setting and training period in <b>Forecast settings</b> above the chart.</div>` +
+    `<details id="allModels" ${S.allOpen ? 'open' : ''}><summary>${S.allPeriods ? `All ${m.board.length} models, settings and periods` : `All ${list.length} models for ${PERIOD_NAME[L0]}`}, ranked by test error</summary>` +
     `<label class="chk" style="margin:6px 0"><input type="checkbox" id="allPeriods" ${S.allPeriods ? 'checked' : ''}> Show every training period</label><div class="tscroll"><table class="btable">` +
-    `<thead><tr><th>#</th><th>Model</th><th>Setting</th><th>Period</th><th>Avg error (MAE)</th><th>RMSE</th><th title="Positive = less error than no change. ✓ = better on most test days">vs no change</th></tr></thead><tbody>${rows}</tbody></table></div></details>` +
-    `<div class="s">Last updated ${at.date.slice(8)}/${at.date.slice(5,7)} ${at.time} (${age === 0 ? 'today' : age + ' day' + (age > 1 ? 's' : '') + ' ago'}): every model was fitted on each training period (1 week to 6 months) and tested on ${m.origins} hourly forecasts ` +
-    `(${m.from.slice(8)}/${m.from.slice(5,7)} → ${m.to.slice(8)}/${m.to.slice(5,7)}, 1–24 trading hours ahead, only earlier data used). Fitted settings stay fixed until you press <b>Update models</b> (about once a month); new prices still move the forecast.` +
+    `<thead><tr><th>#</th><th>Model</th><th>Setting</th><th>Period</th><th>Test error (MAE)</th><th>Test RMSE</th><th title="Test days. Positive = less error than no change. ✓ = was reliably better on the validation days, so Auto may pick it">vs no change</th></tr></thead><tbody>${rows}</tbody></table></div></details>` +
+    `<div class="s">Last updated ${at.date.slice(8)}/${at.date.slice(5,7)} ${at.time} (${age === 0 ? 'today' : age + ' day' + (age > 1 ? 's' : '') + ' ago'}): every model was fitted on each training period (1 week to 6 months). <b>Test</b> = the last ${TEST_DAYS} trading days ` +
+    `(${m.from.slice(8)}/${m.from.slice(5,7)} → ${m.to.slice(8)}/${m.to.slice(5,7)}, ${m.origins} hourly forecasts, 1–24 trading hours ahead, only earlier data used); ` +
+    `Auto chose on the ${VAL_DAYS} trading days before (${m.valFrom.slice(8)}/${m.valFrom.slice(5,7)} → ${m.valTo.slice(8)}/${m.valTo.slice(5,7)}), so the test days did not influence it. Fitted settings stay fixed until you press <b>Update models</b> (about once a month); new prices still move the forecast.` +
     ` The chosen model draws the purple line and its band (80% of its past errors); buy/sell hours come from the daily pattern.</div></div>`;
 }
 function renderPanels(){
-  renderPeriodBar();
+  renderModelBar();
   const F = S.fc;
   if(!F){ $('cards').innerHTML = S.key && S.days.size ? modelCard() : ''; $('dayCards').innerHTML = ''; S.verdict = null; return; }
   const V = S.verdict = verdict(F.bt);
@@ -1908,7 +1921,7 @@ function renderTabs(){
   $('subtitle').textContent = ({ tv:'Live chart by TradingView', fc:'1–2 day buy/sell forecast from 5-minute history', trk:'Trade Tracker: take-profit and cut-loss alerts' })[prefs.tab] + ' · Thai time (UTC+7)';
   $('pollSel').value = prefs.poll;
   document.querySelectorAll('#themeSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === prefs.theme));
-  document.querySelectorAll('#refSeg button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.v === prefs.ref));
+  if($('refSel').options.length) $('refSel').value = prefs.ref;
   document.querySelectorAll('#unitSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === prefs.unit));
   $('wdChk').checked = prefs.weekday; $('rangeChk').checked = prefs.showRange; $('symSel').value = prefs.symbol;
   if(prefs.tab === 'tv' && (!S.tvMounted || S.tvDirty)) mountTv();
@@ -1925,9 +1938,8 @@ $('themeSeg').addEventListener('click', e => {
   prefs.theme = b.dataset.v; savePrefs(); applyTheme(); S.tvDirty = true; renderTabs(); themeChart(); if(prefs.tab === 'fc') refresh();
 });
 $('symSel').addEventListener('change', e => { prefs.symbol = e.target.value; savePrefs(); S.tvDirty = true; renderTabs(); });
-$('refSeg').addEventListener('click', e => {
-  const b = e.target.closest('button'); if(!b) return;
-  prefs.ref = +b.dataset.v;
+$('refSel').addEventListener('change', e => {
+  prefs.ref = +e.target.value;
   const L = refL(); if(S.model && S.model.manual) prefs.model = swapPeriod(prefs.model, L);   // same model, fitted on the new period
   savePrefs(); applyModel(S.model && store.json(K.model)); renderTabs(); refresh();
   if(S.meta.oldestBar && S.meta.oldestBar.slice(0,10) > targetDate() && !S.meta.limitReached) sync();   // fetch older days if needed
@@ -1947,17 +1959,15 @@ const useModel = id => {
   prefs.model = id; const L = periodOf(id); if(L) prefs.ref = LOOKBACK[L];          // a model's period is the training period
   savePrefs(); applyModel(store.json(K.model)); renderTabs(); refresh();
 };
-$('cards').addEventListener('change', e => {
-  if(e.target.id === 'famSel'){
+$('famSel').addEventListener('change', e => {
     const f = e.target.value;
     if(f === 'auto') return useModel('auto');
     if(f === 'autoAll'){ const id = S.model.auto, L = periodOf(id); if(L){ prefs.ref = LOOKBACK[L]; renderTabs(); } return useModel('autoAll'); }
     const L0 = periodOf(S.model.id) || refL();
     const r = S.model.board.filter(x => x.id.split(':')[0] === f && (!periodOf(x.id) || periodOf(x.id) === L0)).sort((a,b) => a.mae - b.mae)[0]; if(r) useModel(r.id);
-  }
-  if(e.target.id === 'setSel') useModel(e.target.value);
-  if(e.target.id === 'allPeriods'){ S.allPeriods = e.target.checked; renderPanels(); }
 });
+$('setSel').addEventListener('change', e => useModel(e.target.value));
+$('cards').addEventListener('change', e => { if(e.target.id === 'allPeriods'){ S.allPeriods = e.target.checked; renderPanels(); } });
 $('cards').addEventListener('toggle', e => { if(e.target.id === 'allModels') S.allOpen = e.target.open; }, true);
 $('rangeChk').addEventListener('change', e => { prefs.showRange = e.target.checked; savePrefs(); draw(true); });
 $('barSeg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; prefs.bar = b.dataset.v === 'auto' ? 'auto' : +b.dataset.v; savePrefs(); draw(true); });
