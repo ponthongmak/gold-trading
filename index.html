@@ -142,6 +142,12 @@ details{margin-top:8px;font-size:12.5px} details summary{cursor:pointer;color:va
 .btable tr.mrow{cursor:pointer} .btable tr.mrow:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
 .btable tr.sel td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
 .btable .best{color:var(--accent);font-weight:700}
+.card.wide{grid-column:1/-1}
+.card .tscroll{overflow-x:auto;margin-top:6px}
+.card .btable{border:0;border-radius:0;margin:0;min-width:520px}
+.card .btable td,.card .btable th{padding:6px 8px}
+.modelhead{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
+.modelhead .btn{padding:3px 10px;font-size:12px}
 .mpanel{margin-bottom:12px}
 .mcard{background:var(--surface);border:1px solid var(--border);border-left:5px solid var(--stale);border-radius:10px;padding:12px 14px}
 .mcard.up{border-left-color:var(--up)} .mcard.down{border-left-color:var(--down)}
@@ -248,7 +254,7 @@ footer a{color:var(--muted)}
         <div class="seg" id="barSeg"><button data-v="auto">Auto</button><button data-v="5">5m</button><button data-v="10">10m</button><button data-v="30">30m</button><button data-v="60">1h</button></div></div>
       <div class="grp"><span class="lbl">Y</span>
         <div class="seg" id="unitSeg"><button data-v="usd">USD</button><button data-v="pct">% vs now</button></div></div>
-      <label class="chk"><input type="checkbox" id="rangeChk"> Min–max band</label>
+      <label class="chk"><input type="checkbox" id="rangeChk"> Wide band</label>
       <span class="spacer"></span>
       <button class="btn" id="nowBtn">Now ⟶</button>
     </div>
@@ -259,10 +265,11 @@ footer a{color:var(--muted)}
     </div>
 
     <div class="note" id="fcNote">
-      Candles = actual 5-minute prices (re-grouped as you zoom). <b style="color:var(--proj)">Purple line</b>: over the <b>last 5 trading days</b> it shows, for each day, what this method predicted 24 trading hours earlier (compare it with the candles);
-      from now on it is the forecast for the next 48 trading hours (weekends and the daily break are skipped), with the darker band = typical range Q1–Q3 and the lighter band = min–max (if enabled). Blue = best/2nd-best <b>buy</b> hours, orange = <b>sell</b> hours; the small boxes are the price zones.
+      Candles = actual 5-minute prices (re-grouped as you zoom; weekends and the daily 1-hour break are left out). <b style="color:var(--proj)">Purple line</b>: over the <b>last 5 trading days</b> it shows, for each day, what the forecast predicted 24 trading hours earlier (compare it with the candles);
+      from now on it is the forecast for the next 48 trading hours, drawn by the model in use (see <b>Forecast model</b>: every model is re-fitted daily and the one with the smallest past error is used). The darker band = 80% of that model's past errors, the lighter band = 95% (if enabled).
+      Blue = best/2nd-best <b>buy</b> hours, orange = <b>sell</b> hours, picked from the typical intraday pattern of the chosen period; the small boxes are the price zones.
       <b>Buy ≈</b> = the typical lowest price within that hour on similar past days (a limit order there filled on about half of days); zone = the middle half of those lows. <b>Sell ≈</b> = the typical highest price within the hour; zone = the middle half of those highs.
-      The forecast combines the typical intraday pattern of the chosen period with a damped recent trend. It is a statistical guide, not financial advice.
+      It is a statistical guide, not financial advice.
     </div>
   </section>
 
@@ -345,7 +352,7 @@ const LIMIT = 800, RESERVE = 50, USABLE = LIMIT - RESERVE;
 const SLOTS = 288, MIN_SLOTS = 72, WIN = 12, HORIZON_H = 48, KEEP_DAYS = 300;
 // Reliability verdict: chance-by-luck thresholds (binomial, coin flip = ½) and minimum median sell−buy edge in %
 const P_GREEN = 0.05, P_AMBER = 0.20, EDGE_GREEN = 0.05, EDGE_AMBER = 0.02;
-const K = { key:'gh.key', quota:'gh.quota', prefs:'ghv2.prefs', pos:'ghv2.pos', line:'ghv2.line' };
+const K = { key:'gh.key', quota:'gh.quota', prefs:'ghv2.prefs', pos:'ghv2.pos', line:'ghv2.line', model:'ghv2.model' };
 
 const store = {
   get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
@@ -354,11 +361,12 @@ const store = {
   json(k){ try { return JSON.parse(this.get(k) || 'null'); } catch(e){ return null; } }
 };
 const prefs = Object.assign({ tab:'fc', symbol:'OANDA:XAUUSD', theme:'auto', ref:30, weekday:false, bar:'auto', unit:'usd', showRange:false, poll:5,
-  t1:0.5, t2:1, t3:2, cut:1, cost:0, btDays:20 },
+  t1:0.5, t2:1, t3:2, cut:1, cost:0, btDays:20, model:'auto' },
   store.json(K.prefs) || {});
 delete prefs.interval;
 if(![5,10,30,60].includes(+prefs.bar)) prefs.bar = 'auto';
-delete prefs.model; delete prefs.showCone; delete prefs.advChart; delete prefs.adv;
+if(typeof prefs.model !== 'string') prefs.model = 'auto';
+delete prefs.showCone; delete prefs.advChart; delete prefs.adv;
 if(![1,2,5].includes(+prefs.poll)) prefs.poll = 5;
 if(!['fc','trk','tv'].includes(prefs.tab)) prefs.tab = 'fc';
 const savePrefs = () => store.set(K.prefs, JSON.stringify(prefs));
@@ -398,10 +406,14 @@ function css(n){ return getComputedStyle(document.documentElement).getPropertyVa
 function showErr(m){ const e = $('err'); e.textContent = m || ''; e.style.display = m ? 'block' : 'none'; }
 
 const etFmt = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', weekday:'short', hour:'numeric', hourCycle:'h23' });
+const openMemo = new Map();
 function marketOpen(ms = nowMs()){        // spot gold: Sun 18:00 → Fri 17:00 New York, daily break 17:00–18:00
+  const hr = Math.floor(ms/3600e3); if(openMemo.has(hr)) return openMemo.get(hr);
   const p = Object.fromEntries(etFmt.formatToParts(new Date(ms)).map(x => [x.type, x.value]));
   const h = +p.hour % 24, w = p.weekday;
-  if(w === 'Sat') return false; if(w === 'Sun') return h >= 18; if(w === 'Fri') return h < 17; return h !== 17;
+  const o = w === 'Sat' ? false : w === 'Sun' ? h >= 18 : w === 'Fri' ? h < 17 : h !== 17;
+  if(openMemo.size > 20000) openMemo.clear();
+  openMemo.set(hr, o); return o;
 }
 function nextOpen(ms = nowMs()){ let t = Math.ceil(ms/300e3)*300e3; for(let i=0; i<1200 && !marketOpen(t); i++) t += 300e3; return t + 30e3; }
 
@@ -478,10 +490,22 @@ async function loadStore(){
   try{ S.db = await openDb(); }catch(e){ S.db = null; return; }
   (await idb('days', 'readonly', st => st.getAll()) || []).forEach(r => { r.med = dayMed(r); S.days.set(r.date, r); });
   Object.assign(S.meta, await idb('meta', 'readonly', st => st.get('meta')) || {});
+  if(!S.meta.cleanV){                                // one-time: remove closed-market bars stored by earlier versions
+    const put = [], del = [];
+    S.days.forEach(d => {
+      const base = thaiMs(d.date + ' 00:00:00'); let changed = false;
+      for(let s = 0; s < SLOTS; s++) if(d.c[s] != null && !marketOpen(base + s*300e3)){ d.o[s] = d.h[s] = d.l[s] = d.c[s] = null; changed = true; }
+      if(!changed) return;
+      if(d.c.some(v => v != null)){ d.med = dayMed(d); put.push(d); } else { S.days.delete(d.date); del.push(d.date); }
+    });
+    if(put.length || del.length) await idb('days', 'readwrite', st => { put.forEach(d => st.put({ date:d.date, o:d.o, h:d.h, l:d.l, c:d.c })); del.forEach(k => st.delete(k)); });
+    S.meta.cleanV = 1; await saveMeta();
+  }
 }
 const saveMeta = () => idb('meta', 'readwrite', st => { st.put({ ...S.meta }, 'meta'); });
-async function ingest(bars){
-  if(!bars.length) return;
+async function ingest(all){
+  if(!all.length) return;
+  const bars = all.filter(b => marketOpen(thaiMs(b.dt)));      // Twelve Data also sends weekend / daily-break bars: not real trading
   const touched = new Map(), blank = () => new Array(SLOTS).fill(null);
   for(const b of bars){
     const date = b.dt.slice(0,10), s = (+b.dt.slice(11,13))*12 + Math.floor(+b.dt.slice(14,16)/5);
@@ -491,16 +515,15 @@ async function ingest(bars){
   }
   touched.forEach(d => d.med = dayMed(d));
   S.dataVer = (S.dataVer || 0) + 1;                // invalidates the odds caches
-  const m = S.meta, first = bars[0].dt, last = bars[bars.length-1].dt;
+  const m = S.meta, first = all[0].dt, last = all[all.length-1].dt;
   if(!m.lastBar || last > m.lastBar) m.lastBar = last;
   if(!m.oldestBar || first < m.oldestBar) m.oldestBar = first;
-  await idb('days', 'readwrite', st => { touched.forEach(d => st.put({ date:d.date, o:d.o, h:d.h, l:d.l, c:d.c })); });
+  if(touched.size) await idb('days', 'readwrite', st => { touched.forEach(d => st.put({ date:d.date, o:d.o, h:d.h, l:d.l, c:d.c })); });
   await saveMeta();
-  trackPosition(bars);
+  if(bars.length) trackPosition(bars);
 }
-// History needed: the reference period plus ~20 trading days for the back-test.
-// History needed: the reference period plus the longer of the old back-test window and the 8-week accuracy check (+ 48 h).
-const targetDate = () => addDays(thai().date, -(prefs.ref + Math.max(Math.ceil((prefs.btDays || 20) * 1.5) + 10, 8*7 + 4)));
+// The model engine needs up to 6 months of look-back before its 20 scoring days (~215 calendar days).
+const targetDate = () => addDays(thai().date, -Math.max(215, prefs.ref + Math.max(Math.ceil((prefs.btDays || 20) * 1.5) + 10, 8*7 + 4)));
 async function prune(){
   const t = addDays(thai().date, -KEEP_DAYS), old = [...S.days.keys()].filter(d => d < t);
   old.forEach(d => S.days.delete(d));
@@ -578,8 +601,12 @@ function latestAt(ms){
   return null;
 }
 function latest(){
-  const d = S.meta.lastBar && S.days.get(S.meta.lastBar.slice(0,10)); if(!d) return null;
-  for(let s = SLOTS-1; s >= 0; s--) if(d.c[s] != null) return { price:d.c[s], t:dayEpoch(d.date) + s*300, date:d.date, s };
+  if(!S.meta.lastBar) return null;
+  const top = S.meta.lastBar.slice(0,10), dates = [...S.days.keys()].filter(d => d <= top).sort().reverse();
+  for(const date of dates.slice(0, 6)){
+    const d = S.days.get(date);
+    for(let s = SLOTS-1; s >= 0; s--) if(d.c[s] != null) return { price:d.c[s], t:dayEpoch(d.date) + s*300, date:d.date, s };
+  }
   return null;
 }
 // Reference days strictly before `before`, within the chosen calendar span; optionally the same weekday only.
@@ -608,7 +635,7 @@ function windowsOf(pts){
   for(let i = 0; i + WIN <= pts.length; i++){
     if(pts[i+WIN-1].t - pts[i].t !== (WIN-1)*300) continue;
     const seg = pts.slice(i, i+WIN);
-    c.push({ t0:seg[0].t, t1:seg[WIN-1].t + 300, rel:median(seg.map(p => p.rel)), price:mean(seg.map(p => p.price)), date:seg[0].date, k:seg[0].k, s0:seg[0].s });
+    c.push({ t0:seg[0].t, t1:seg[WIN-1].t + 300, rel:median(seg.map(p => p.rel)), price:mean(seg.map(p => p.tp ?? p.price)), mp:mean(seg.map(p => p.price)), date:seg[0].date, k:seg[0].k, s0:seg[0].s });
   }
   return c;
 }
@@ -655,7 +682,20 @@ function forecast(opts = {}){
     const k = dates.indexOf(th.date) + (dates[0] === L.date ? 0 : 1);
     const st = statsFor(dow(th.date)).st[th.slot]; if(!st) continue;
     const m = anchor + slope*k, P = v => m*(1 + v/100);
-    pts.push({ t:wallSec(ms), date:th.date, k, s:th.slot, rel:st.med, price:P(st.med), q1:P(st.q1), q3:P(st.q3), min:P(st.min), max:P(st.max) });
+    pts.push({ t:wallSec(ms), date:th.date, k, s:th.slot, h:open/12, rel:st.med, price:P(st.med), tp:P(st.med), q1:P(st.q1), q3:P(st.q3), min:P(st.min), max:P(st.max) });
+  }
+  // The selected model (see retrainAndSelect) sets the price path and its range (from its own past errors).
+  // The daily pattern above still sets the timing of the buy / sell hours (field tp).
+  const MS = S.model && S.model.row, H = MS ? hourly() : null;
+  let modelUsed = null;
+  if(MS && H.y.length){
+    let j = H.t.length - 1; while(j > 0 && H.t[j] > L.t) j--;
+    const pr = predict(parseModel(MS.id), H, j, { price:L.price, date:L.date, s0:L.s }, pts.map(p => ({ h:p.h, s:p.s, k:p.k })));
+    if(pr){
+      modelUsed = MS.id;
+      pts.forEach((p, i) => { const e8 = errAt(MS.e80, p.h), e9 = errAt(MS.e95, p.h);
+        Object.assign(p, { price:pr[i], q1:pr[i] - e8, q3:pr[i] + e8, min:pr[i] - e9, max:pr[i] + e9 }); });
+    }
   }
   const perDay = dates.map(date => {
     const dp = pts.filter(p => p.date === date);
@@ -679,14 +719,15 @@ function forecast(opts = {}){
       if(n >= 8){ lows.push((lo/d.med - 1)*100); highs.push((hi/d.med - 1)*100); }
     }
     if(lows.length < 3){ w.bp = w.sp = null; w.bz = w.sz = [null, null]; return; }
-    const m = anchor + slope*w.k, P = v => m*(1 + v/100), sl = lows.sort((a,b) => a - b), sh = highs.sort((a,b) => a - b);
+    const m = modelUsed ? w.mp/(1 + w.rel/100) : anchor + slope*w.k;   // day level implied by the selected model at that hour
+    const P = v => m*(1 + v/100), sl = lows.sort((a,b) => a - b), sh = highs.sort((a,b) => a - b);
     w.bp = P(quant(sl, .5)); w.bz = [P(quant(sl, .25)), P(quant(sl, .75))];
     w.sp = P(quant(sh, .5)); w.sz = [P(quant(sh, .25)), P(quant(sh, .75))];
     w.nDays = lows.length;
   };
   perDay.forEach(d => ['buy1','buy2','sell1','sell2'].forEach(k => windowPrices(d[k])));
   if(trip){ windowPrices(trip.buy); windowPrices(trip.sell); }
-  return { pts, perDay, trip, slope, anchor, latest:L, refN:base.n, fallback:base.fallback, recent:days.slice(-10), bt: opts.noBacktest ? null : backtest(days) };
+  return { pts, perDay, trip, slope, anchor, latest:L, model:modelUsed, refN:base.n, fallback:base.fallback, recent:days.slice(-10), bt: opts.noBacktest ? null : backtest(days) };
 }
 // Back-test: for each of the last 20 complete days, pick windows from earlier days only and compare with what happened.
 function backtest(days){
@@ -740,6 +781,220 @@ function scanSettings(){
   out.sort((a,b) => (VERDICT_RANK[b.v.level] - VERDICT_RANK[a.v.level]) || (b.score - a.score));
   scanCache = { key, at:nowMs(), res:out };
   return out;
+}
+
+// ---------- Model engine: retrain every model on stored data, score it, and use the most accurate one ----------
+// Works on the hourly series (close of the last 5-minute bar in each trading hour). Every forecast in the scoring
+// uses only data before its origin. Scoring: one forecast per trading hour over the last 20 trading days, 1–24
+// trading hours ahead; the lowest mean absolute error (MAE) wins. No API calls: stored data only.
+const LOOKBACK = { '1w':7, '2w':14, '1m':30, '3m':91, '6m':182 }, MH = 24, SCORE_DAYS = 20, MARGIN = 0.01, T_MIN = 2;
+const FAM = {
+  naive:{ name:'No change', why:'The latest price, held flat. Hard to beat on short horizons.' },
+  pattern:{ name:'Daily pattern', why:'Typical intraday shape + damped trend (the original method).' },
+  shrunk:{ name:'Shrunk pattern', why:'Latest price nudged by part of the typical intraday shape.' },
+  seasonal:{ name:'Seasonal naive', why:'Repeats the last 24 trading hours’ move.' },
+  drift:{ name:'Drift', why:'Latest price + the average hourly drift of recent days.' },
+  ets:{ name:'ETS', why:'Exponential smoothing of level (and trend).' },
+  ar:{ name:'AR', why:'Autoregression on hourly returns (short-term momentum / mean reversion).' },
+  ens:{ name:'Ensemble', why:'Median of No change, Shrunk pattern, ETS and AR.' }
+};
+let hourCache = { key:'', H:null };
+function hourly(){
+  const key = S.meta.lastBar + '|' + S.days.size + '|' + (S.dataVer || 0);
+  if(hourCache.key === key) return hourCache.H;
+  const t = [], y = [], slot = [], date = [];
+  for(const d of [...S.days.values()].sort((a,b) => a.date < b.date ? -1 : 1)){
+    const base = dayEpoch(d.date);
+    for(let hr = 0; hr < 24; hr++) for(let s = hr*12 + 11; s >= hr*12; s--)
+      if(d.c[s] != null){ t.push(base + s*300); y.push(d.c[s]); slot.push(s); date.push(d.date); break; }
+  }
+  const H = { t, y, slot, date, ly:y.map(Math.log), fits:new Map(), refs:new Map() };
+  hourCache = { key, H };
+  return H;
+}
+const idxOfDate = (H, date) => { let lo = 0, hi = H.date.length; while(lo < hi){ const m = (lo+hi) >> 1; if(H.date[m] < date) lo = m + 1; else hi = m; } return lo; };
+// Median relative position (% vs day median) per 5-min slot over complete days in [date − L, date), gaps filled.
+function refRel(H, date, L){
+  const key = date + '|' + L; if(H.refs.has(key)) return H.refs.get(key);
+  const from = addDays(date, -LOOKBACK[L]), days = completeDays(date).filter(d => d.date >= from);
+  let out = null;
+  if(days.length >= 3){
+    const v = Array.from({ length:SLOTS }, () => []);
+    for(const d of days) d.c.forEach((x, s) => { if(x != null) v[s].push((x/d.med - 1)*100); });
+    out = v.map(a => a.length ? median(a) : null);
+    let last = out.find(x => x != null) ?? 0; for(let s = 0; s < SLOTS; s++){ if(out[s] == null) out[s] = last; else last = out[s]; }
+    out.slope = theilSen(completeDays(date).slice(-10).map(d => d.med)) * 0.5;
+  }
+  H.refs.set(key, out); return out;
+}
+// ETS: grid-search the smoothing parameters on the look-back window (one-step squared error), refit for each day.
+function etsFit(y, kind){
+  const As = [.1,.2,.3,.4,.5,.6,.7,.8,.9,1], Bs = kind === 'ses' ? [0] : [.01,.03,.1,.3], Ps = kind === 'ses' ? [0] : kind === 'linear' ? [1] : [.8,.9,.95,.98];
+  let best = null;
+  for(const a of As) for(const b of Bs) for(const phi of Ps){
+    let Lv = y[0], T = 0, sse = 0;
+    for(let i = 1; i < y.length; i++){ const f = Lv + phi*T, e = y[i] - f; sse += e*e; const Lp = Lv; Lv = a*y[i] + (1-a)*f; T = b*(Lv - Lp) + (1-b)*phi*T; }
+    if(!best || sse < best.sse) best = { a, b, phi, sse };
+  }
+  return best;
+}
+const phiSum = (phi, h) => phi === 1 ? h : phi === 0 ? 0 : phi*(1 - Math.pow(phi, h))/(1 - phi);
+// AR(p) on hourly log returns by least squares (normal equations).
+function arFit(r, p){
+  const n = r.length - p; if(n < 30) return null;
+  const k = p + 1, A = Array.from({ length:k }, () => new Array(k).fill(0)), bv = new Array(k).fill(0);
+  for(let i = p; i < r.length; i++){
+    const x = [1]; for(let m = 1; m <= p; m++) x.push(r[i-m]);
+    for(let a = 0; a < k; a++){ bv[a] += x[a]*r[i]; for(let b = 0; b < k; b++) A[a][b] += x[a]*x[b]; }
+  }
+  for(let c = 0; c < k; c++){                                         // Gaussian elimination
+    let piv = c; for(let r2 = c+1; r2 < k; r2++) if(Math.abs(A[r2][c]) > Math.abs(A[piv][c])) piv = r2;
+    [A[c], A[piv]] = [A[piv], A[c]]; [bv[c], bv[piv]] = [bv[piv], bv[c]];
+    if(Math.abs(A[c][c]) < 1e-18) return null;
+    for(let r2 = 0; r2 < k; r2++){ if(r2 === c) continue; const f = A[r2][c]/A[c][c]; for(let c2 = c; c2 < k; c2++) A[r2][c2] -= f*A[c][c2]; bv[r2] -= f*bv[c]; }
+  }
+  const beta = bv.map((v, i) => v/A[i][i]);
+  return { c:beta[0], phi:beta.slice(1) };
+}
+// Parameters fitted on the look-back window that ends at the start of `date` (cached per day).
+function fitFor(H, kind, L, date, extra){
+  const key = [kind, L, date, extra].join('|'); if(H.fits.has(key)) return H.fits.get(key);
+  const hi = idxOfDate(H, date), lo = idxOfDate(H, addDays(date, -LOOKBACK[L]));
+  let f = null;
+  if(kind === 'ets' && hi - lo >= 50) f = etsFit(H.y.slice(lo, hi), extra);
+  if(kind === 'ar' && hi - lo >= 80){ const r = []; for(let i = lo + 1; i < hi; i++) r.push(H.ly[i] - H.ly[i-1]); f = arFit(r, +extra); }
+  if(f) f.lo = lo;
+  H.fits.set(key, f); return f;
+}
+function parseModel(id){ const [fam, a, b] = id.split(':'); return { id, fam, L:LOOKBACK[a] ? a : null, w:fam === 'shrunk' ? +b : null, kind:fam === 'ets' ? b : null, p:fam === 'ar' ? +b : null, N:fam === 'drift' ? +a : null }; }
+// Forecast prices for `targets` ([{ h: trading hours ahead, s: slot, k: trading days ahead }]) made at hourly index j.
+// `price` = latest close at the origin (may be later than H.y[j] inside the current hour), `date` = origin date, `s0` = its slot.
+function predict(M, H, j, o, targets){
+  const { price, date, s0 } = o;
+  switch(M.fam){
+    case 'naive': return targets.map(() => price);
+    case 'pattern': case 'shrunk': {
+      const rel = refRel(H, date, M.L); if(!rel) return null;
+      if(M.fam === 'shrunk') return targets.map(g => price*(1 + M.w*(rel[g.s] - rel[s0])/100));
+      const anchor = price/(1 + rel[s0]/100);
+      return targets.map(g => (anchor + rel.slope*g.k)*(1 + rel[g.s]/100));
+    }
+    case 'seasonal': {
+      if(j < MH) return null;
+      const base = H.y[j - MH], step = h => H.y[j - MH + Math.min(MH, Math.max(1, Math.ceil(h)))]/base;
+      return targets.map(g => price*step(g.h)*(g.h > MH ? step(g.h - MH) : 1));
+    }
+    case 'drift': {
+      const n = M.N*23; if(j < n) return null;
+      const mu = (H.ly[j] - H.ly[j - n])/n;
+      return targets.map(g => price*Math.exp(mu*g.h));
+    }
+    case 'ets': {
+      const f = fitFor(H, 'ets', M.L, date, M.kind); if(!f) return null;
+      let Lv = H.y[f.lo], T = 0;
+      for(let i = f.lo + 1; i <= j; i++){ const Lp = Lv; Lv = f.a*H.y[i] + (1-f.a)*(Lv + f.phi*T); T = f.b*(Lv - Lp) + (1-f.b)*f.phi*T; }
+      if(price !== H.y[j]){ const Lp = Lv; Lv = f.a*price + (1-f.a)*(Lv + f.phi*T); T = f.b*(Lv - Lp) + (1-f.b)*f.phi*T; }
+      return targets.map(g => Lv + phiSum(f.phi, g.h)*T);
+    }
+    case 'ar': {
+      const f = fitFor(H, 'ar', M.L, date, M.p); if(!f || j < M.p + 1) return null;
+      const hist = []; for(let m = M.p; m >= 1; m--) hist.push(H.ly[j-m+1] - H.ly[j-m]);
+      const path = [Math.log(price)];
+      for(let h = 1; h <= Math.ceil(Math.max(...targets.map(g => g.h))); h++){
+        let nx = f.c; for(let m = 0; m < M.p; m++) nx += f.phi[m]*hist[hist.length-1-m];
+        hist.push(nx); path.push(path[h-1] + nx);
+      }
+      return targets.map(g => { const a = Math.floor(g.h), fr = g.h - a; return Math.exp(path[a] + (fr ? (path[a+1] - path[a])*fr : 0)); });
+    }
+    case 'ens': {
+      const parts = (S.model && S.model.ens || ['naive']).map(id => predict(parseModel(id), H, j, o, targets)).filter(Boolean);
+      return parts.length ? targets.map((_, i) => median(parts.map(p => p[i]))) : null;
+    }
+  }
+  return null;
+}
+function candidateIds(){
+  const ids = ['naive', 'seasonal'];
+  for(const L in LOOKBACK){ ids.push('pattern:' + L); for(const w of [0.25, 0.5, 0.75, 1]) ids.push(`shrunk:${L}:${w}`);
+    for(const k of ['ses','linear','damped']) ids.push(`ets:${L}:${k}`); for(const p of [1,2,3]) ids.push(`ar:${L}:${p}`); }
+  for(const N of [5, 10, 20]) ids.push('drift:' + N);
+  return ids;
+}
+function modelLabel(id){
+  const M = parseModel(id), parts = [];
+  if(M.L) parts.push(M.L.replace('w', ' wk').replace('m', ' mo'));
+  if(M.w != null) parts.push(`shape × ${M.w}`);
+  if(M.kind) parts.push({ ses:'flat', linear:'trend', damped:'damped trend' }[M.kind]);
+  if(M.p) parts.push(`AR(${M.p})`);
+  if(M.N) parts.push(`${M.N} days`);
+  return parts.join(' · ') || '—';
+}
+// Score one model: every trading hour of the scoring days as origin, 1–24 trading hours ahead.
+function scoreModel(H, M, origins){
+  const abs = Array.from({ length:MH + 1 }, () => []), byDay = new Map(); let se = 0, n = 0;
+  for(const j of origins){
+    const tg = []; let k = 0;
+    for(let h = 1; h <= MH && j + h < H.y.length; h++){ if(H.date[j+h] !== H.date[j+h-1]) k++; tg.push({ h, s:H.slot[j+h], k }); }
+    if(!tg.length) continue;
+    const f = predict(M, H, j, { price:H.y[j], date:H.date[j], s0:H.slot[j] }, tg);
+    if(!f) return null;                                                  // every model must cover every origin
+    const dd = byDay.get(H.date[j]) || byDay.set(H.date[j], [0, 0]).get(H.date[j]);
+    tg.forEach((g, i) => { const e = f[i] - H.y[j + g.h]; abs[g.h].push(Math.abs(e)); se += e*e; n++; dd[0] += Math.abs(e); dd[1]++; });
+  }
+  if(!n) return null;
+  const all = abs.flat(), q = (a, p) => a.length ? quantile(a, p) : null;
+  return { mae:all.reduce((x, y) => x + y, 0)/n, rmse:Math.sqrt(se/n), n:origins.length, daily:new Map([...byDay].map(([d, v]) => [d, v[0]/v[1]])),
+    e80:abs.map(a => q(a, .8)), e95:abs.map(a => q(a, .95)) };
+}
+async function retrainAndSelect(){
+  if(S.training) return; const H = hourly(); if(H.y.length < 200) return;
+  S.training = true; renderPanels();
+  try{
+    const dates = [...new Set(H.date)], scoreDates = dates.slice(-SCORE_DAYS), first = idxOfDate(H, scoreDates[0]);
+    const origins = []; for(let j = first; j < H.y.length - 1; j++) origins.push(j);
+    const res = [], keep = S.model; S.model = null;
+    let t0 = performance.now();
+    for(const id of candidateIds()){
+      const r = scoreModel(H, parseModel(id), origins); if(r) res.push({ id, ...r });
+      if(performance.now() - t0 > 40){ await sleep(0); t0 = performance.now(); }   // keep the page responsive
+    }
+    const bestOf = fam => res.filter(r => r.id.startsWith(fam + ':')).sort((a,b) => a.mae - b.mae)[0];
+    const ens = ['naive', ...['shrunk','ets','ar'].map(f => bestOf(f)).filter(Boolean).map(r => r.id)];
+    S.model = { ens };
+    const re = scoreModel(H, parseModel('ens'), origins); if(re) res.push({ id:'ens', ...re });
+    S.model = keep;
+    const naive = res.find(r => r.id === 'naive');
+    // Consistency vs "no change": paired t-statistic of the daily error differences (positive = better than no change).
+    res.forEach(r => {
+      r.skill = 1 - r.mae/naive.mae;
+      const d = [...naive.daily].map(([k, v]) => v - (r.daily.get(k) ?? v)), m = mean(d), sd = Math.sqrt(d.reduce((a, x) => a + (x - m)**2, 0)/Math.max(1, d.length - 1));
+      r.t = sd > 0 ? m/(sd/Math.sqrt(d.length)) : 0;
+    });
+    res.sort((a,b) => a.mae - b.mae);
+    // A model replaces "no change" only if it is at least 1% more accurate AND better on most days (t ≥ 2); otherwise the gain is luck.
+    const win = res.find(r => r.id === 'naive' || (r.skill >= MARGIN && r.t >= T_MIN)), auto = win.id;
+    const saved = { date:thai().date, at:nowMs(), oldest:dates[0], from:scoreDates[0], to:scoreDates[scoreDates.length-1], origins:origins.length, auto, ens,
+      board:res.map(r => ({ id:r.id, mae:r.mae, rmse:r.rmse, skill:r.skill, t:r.t, e80:r.e80, e95:r.e95 })) };
+    store.set(K.model, JSON.stringify(saved));
+    applyModel(saved);
+  } finally { S.training = false; }
+  refresh();
+}
+function applyModel(saved){
+  if(!saved || !saved.board) { S.model = null; return; }
+  const id = saved.board.some(r => r.id === prefs.model) ? prefs.model : saved.auto, r = saved.board.find(x => x.id === id);
+  S.model = { ...saved, id, row:r, manual:id !== saved.auto };
+}
+// Retrain once a day, and again when more history has been stored.
+function maybeRetrain(){
+  if(S.training || S.syncing || !S.key) return;
+  const s = S.model, H = hourly(); if(H.y.length < 200) return;
+  if(!s || s.date !== thai().date || s.oldest !== H.date[0]) setTimeout(retrainAndSelect, 50);
+}
+// Error band for h trading hours ahead from the model's own past errors (beyond 24 h: grows with √h).
+function errAt(arr, h){
+  if(!arr) return 0; const i = Math.min(MH, Math.max(1, Math.ceil(h)));
+  const v = arr[i] ?? 0; return h > MH ? v*Math.sqrt(h/MH) : v;
 }
 
 // ---------- Target-hit odds: "if I buy now, which level is touched first within 48 h?" ----------
@@ -1149,7 +1404,8 @@ function renderLegend(time){
   }
   if(p){
     const w = windowAt(t);
-    h += `<br><span style="color:var(--proj)">Projected ${usd(p.price)}</span> <span class="m">IQR ${usd(p.q1)} – ${usd(p.q3)}${prefs.showRange ? ` · Min–max ${usd(p.min)} – ${usd(p.max)}` : ''}</span>` + (w ? ` · <b class="${w.includes('buy') ? 'buy' : 'sell'}">${w} window</b>` : '');
+    const fm = S.fc && S.fc.model;
+    h += `<br><span style="color:var(--proj)">Projected ${usd(p.price)}</span> <span class="m">${fm ? '80% range' : 'IQR'} ${usd(p.q1)} – ${usd(p.q3)}${prefs.showRange ? ` · ${fm ? '95% range' : 'Min–max'} ${usd(p.min)} – ${usd(p.max)}` : ''}</span>` + (w ? ` · <b class="${w.includes('buy') ? 'buy' : 'sell'}">${w} window</b>` : '');
     const W = windowObjAt(t);
     if(W) h += `<br><b class="${W.isBuy ? 'buy' : 'sell'}">${W.isBuy ? `Buy ≈ ${usd(W.w.bp)} · zone ${usd(W.w.bz[0])} – ${usd(W.w.bz[1])}` : `Sell ≈ ${usd(W.w.sp)} · zone ${usd(W.w.sz[0])} – ${usd(W.w.sz[1])}`}</b>`;
   }
@@ -1208,9 +1464,31 @@ function logCard(){
     `Direction right ${dirOk}/${dirN} days` + (bN ? ` · best buy hour ✓ ${bOk}/${bN}` : '') + (sN ? ` · best sell hour ✓ ${sOk}/${sN}` : '') +
     ` · daily gap ${dayGaps.map(x => x.toFixed(2)).join(' · ')}%`);
 }
+// Model leaderboard: the best settings of each model family, ranked by error; ★ = the model drawing the forecast.
+function modelCard(){
+  const m = S.model, busy = S.training;
+  const btns = `<span><button class="btn" id="retrainBtn" ${busy ? 'disabled' : ''}>${busy ? 'Retraining…' : 'Retrain now'}</button>` +
+    (m && m.manual ? ` <button class="btn" id="autoModelBtn">Use best (auto)</button>` : '') + '</span>';
+  if(!m) return `<div class="card wide"><div class="modelhead"><div class="k">Forecast model</div>${btns}</div><div class="s">${busy ? 'Training every model on the stored history…' : 'Not trained yet: needs a few weeks of stored history.'}</div></div>`;
+  const fam = id => id.split(':')[0], rows = [];
+  for(const f of Object.keys(FAM)){
+    const r = fam(m.id) === f ? m.row : m.board.filter(x => fam(x.id) === f).sort((a,b) => a.mae - b.mae)[0];
+    if(r) rows.push(r);
+  }
+  rows.sort((a,b) => a.mae - b.mae);
+  const at = thai(m.at), name = id => FAM[fam(id)].name;
+  const body = rows.map(r => `<tr class="mrow ${r.id === m.id ? 'sel' : ''}" data-model="${r.id}" title="${FAM[fam(r.id)].why} Click to use this model.">` +
+    `<td>${r.id === m.id ? '<span class="best">★</span> ' : ''}<b>${name(r.id)}</b></td><td class="m">${modelLabel(r.id)}</td>` +
+    `<td>${usd(r.mae)}</td><td>${usd(r.rmse)}</td><td class="${r.skill > 0.001 ? 'up' : r.skill < -0.001 ? 'down' : ''}">${r.id === 'naive' ? 'baseline' : pct(r.skill*100, 1) + (r.skill >= MARGIN ? (r.t >= T_MIN ? ' ✓' : ' <span class="m">(luck?)</span>') : '')}</td></tr>`).join('');
+  const why = m.manual ? 'chosen by you' : m.id === m.board[0].id ? 'lowest error' : m.id === 'naive' ? 'no model beat it reliably' : 'most accurate reliable model';
+  return `<div class="card wide"><div class="modelhead"><div class="k">Forecast model · in use: <span style="color:var(--text)">★ ${name(m.id)}</span> (${why})</div>${btns}</div>` +
+    `<div class="tscroll"><table class="btable"><thead><tr><th>Model</th><th>Best settings</th><th>Avg error (MAE)</th><th>RMSE</th><th title="Less error than 'no change' = positive. ✓ = better on most test days, so it is used">vs no change</th></tr></thead><tbody>${body}</tbody></table></div>` +
+    `<div class="s">Each model was re-fitted and tested on ${m.origins} hourly forecasts (${m.from.slice(8)}/${m.from.slice(5,7)} → ${m.to.slice(8)}/${m.to.slice(5,7)}, 1–24 trading hours ahead, only earlier data used; look-back up to 6 months).` +
+    ` Retrained ${at.date.slice(8)}/${at.date.slice(5,7)} ${at.time}. The chosen model draws the purple line and its band (80% of its past errors); the buy/sell hours still come from the daily pattern.</div></div>`;
+}
 function renderPanels(){
   const F = S.fc;
-  if(!F){ $('cards').innerHTML = ''; $('dayCards').innerHTML = ''; S.verdict = null; return; }
+  if(!F){ $('cards').innerHTML = S.key && S.days.size ? modelCard() : ''; $('dayCards').innerHTML = ''; S.verdict = null; return; }
   const V = S.verdict = verdict(F.bt);
   const T = F.trip;
   const when = w => `${dayName(w.date)} ${hhmm(w.t0)}–${hhmm(w.t1)}`;
@@ -1226,7 +1504,7 @@ function renderPanels(){
   $('cards').innerHTML = plan +
     card('', 'Trend (damped)', `<span class="${trendPct >= 0 ? 'up' : 'down'}">${pct(trendPct, 2)}/day ${trendPct > 0.02 ? '↑' : trendPct < -0.02 ? '↓' : '→'}</span>`,
       `${hint} Based on ${F.refN} days (${REF_NAME[prefs.ref]}${prefs.weekday ? (F.fallback ? ', too few same-weekday days: all days used' : ', same weekday') : ''}).`) +
-    logCard() + reliabilityCard(F, V);
+    logCard() + reliabilityCard(F, V) + modelCard();
   $('dayCards').classList.toggle('faded', V.level === 'red');
   $('dayCards').innerHTML = F.perDay.map(d => {
     const cell = (k, name, cls) => {
@@ -1284,7 +1562,7 @@ function setEmpty(m){ const e = $('empty'); e.textContent = m || ''; e.style.dis
 
 // Recompute the forecast and redraw (only while the forecast tab is visible).
 function refresh(){
-  if(S.key && S.days.size) S.fc = forecast();
+  if(S.key && S.days.size){ maybeRetrain(); S.fc = forecast(); }
   renderInfo(); renderHeader();
   $('keybox').classList.toggle('hide', !!S.key || prefs.tab === 'tv');
   $('footer').classList.toggle('hide', prefs.tab === 'tv');
@@ -1554,6 +1832,10 @@ $('cards').addEventListener('click', e => {
   const bt = e.target.closest('#btSeg button');
   if(bt){ prefs.btDays = +bt.dataset.v; savePrefs(); refresh();
     if(S.meta.oldestBar && S.meta.oldestBar.slice(0,10) > targetDate() && !S.meta.limitReached) sync(); return; }
+  if(e.target.closest('#retrainBtn')){ retrainAndSelect(); return; }
+  if(e.target.closest('#autoModelBtn')){ prefs.model = 'auto'; savePrefs(); applyModel(S.model); refresh(); return; }
+  const mr = e.target.closest('[data-model]');
+  if(mr){ prefs.model = mr.dataset.model; savePrefs(); applyModel(S.model); refresh(); return; }
   const use = e.target.closest('[data-use-ref]');
   if(use){ prefs.ref = +use.dataset.useRef; prefs.weekday = use.dataset.useWd === '1'; savePrefs(); renderTabs(); refresh(); }
 });
@@ -1581,13 +1863,14 @@ darkMQ.addEventListener('change', () => { if(prefs.theme === 'auto'){ S.tvDirty 
 async function boot(){
   applyTheme();
   await loadStore();
+  applyModel(store.json(K.model));
   store.del('ghv2.draw');   // drawings were removed
   renderTabs(); refresh();
   if(S.key) sync();
   if(prefs.tab === 'trk') relayStatus();
   scheduleLive();
 }
-window.GH = { S, prefs, latestAt, tradingShift, forecast, computeOdds, clearOdds(){ oddsCache.key = ''; caseCache.clear(); }, buildCases, oddsFrom, binomTail, verdict, scanSettings, resetScan(){ scanCache.key = ''; }, refresh, sync, liveTick, ingest, forecast, draw, trackPosition, relay, setNow(ms){ S.fakeNow = ms; }, setApi(fn){ S.apiOverride = fn; },
+window.GH = { S, prefs, retrainAndSelect, hourly, predict, parseModel, scoreModel, applyModel, latestAt, tradingShift, forecast, computeOdds, clearOdds(){ oddsCache.key = ''; caseCache.clear(); }, buildCases, oddsFrom, binomTail, verdict, scanSettings, resetScan(){ scanCache.key = ''; }, refresh, sync, liveTick, ingest, forecast, draw, trackPosition, relay, setNow(ms){ S.fakeNow = ms; }, setApi(fn){ S.apiOverride = fn; },
   async wipe(){ S.days.clear(); Object.assign(S.meta, { lastBar:null, oldestBar:null, checkedAt:0, backfillDone:false, limitReached:false, holeStart:null, holeEnd:null });
     await idb('days','readwrite', st => { st.clear(); }); await idb('meta','readwrite', st => { st.clear(); }); } };
 boot();
