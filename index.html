@@ -148,6 +148,10 @@ details{margin-top:8px;font-size:12.5px} details summary{cursor:pointer;color:va
 .card .btable td,.card .btable th{padding:6px 8px}
 .modelhead{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between}
 .modelhead .btn{padding:3px 10px;font-size:12px}
+.mpick{display:flex;flex-wrap:wrap;gap:8px 16px;margin:8px 0 4px;font-size:13px}
+.mpick label{display:flex;gap:6px;align-items:center;color:var(--muted);font-weight:600;font-size:12px;min-width:0;max-width:100%}
+.mpick select{font:inherit;font-size:13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:5px 8px;max-width:100%;min-width:0}
+#allModels{margin-top:6px}
 .mpanel{margin-bottom:12px}
 .mcard{background:var(--surface);border:1px solid var(--border);border-left:5px solid var(--stale);border-radius:10px;padding:12px 14px}
 .mcard.up{border-left-color:var(--up)} .mcard.down{border-left-color:var(--down)}
@@ -690,7 +694,7 @@ function forecast(opts = {}){
   let modelUsed = null;
   if(MS && H.y.length){
     let j = H.t.length - 1; while(j > 0 && H.t[j] > L.t) j--;
-    const pr = predict(parseModel(MS.id), H, j, { price:L.price, date:L.date, s0:L.s }, pts.map(p => ({ h:p.h, s:p.s, k:p.k })));
+    const pr = predict(parseModel(MS.id), H, j, { price:L.price, date:L.date, s0:L.s, frozen:S.model.params }, pts.map(p => ({ h:p.h, s:p.s, k:p.k })));
     if(pr){
       modelUsed = MS.id;
       pts.forEach((p, i) => { const e8 = errAt(MS.e80, p.h), e9 = errAt(MS.e95, p.h);
@@ -796,6 +800,7 @@ const FAM = {
   drift:{ name:'Drift', why:'Latest price + the average hourly drift of recent days.' },
   ets:{ name:'ETS', why:'Exponential smoothing of level (and trend).' },
   ar:{ name:'AR', why:'Autoregression on hourly returns (short-term momentum / mean reversion).' },
+  arima:{ name:'ARIMA(1,1,1)', why:'AR(1) + moving-average(1) on hourly returns: momentum plus a correction for the last surprise.' },
   ens:{ name:'Ensemble', why:'Median of No change, Shrunk pattern, ETS and AR.' }
 };
 let hourCache = { key:'', H:null };
@@ -814,8 +819,10 @@ function hourly(){
 }
 const idxOfDate = (H, date) => { let lo = 0, hi = H.date.length; while(lo < hi){ const m = (lo+hi) >> 1; if(H.date[m] < date) lo = m + 1; else hi = m; } return lo; };
 // Median relative position (% vs day median) per 5-min slot over complete days in [date − L, date), gaps filled.
-function refRel(H, date, L){
-  const key = date + '|' + L; if(H.refs.has(key)) return H.refs.get(key);
+// With `frozen` (parameters saved at the last "Update models"), the saved shape is used; the trend still uses the latest days.
+function refRel(H, date, L, frozen){
+  const fz = frozen && frozen['rel|' + L], key = (fz ? 'F|' : '') + date + '|' + L; if(H.refs.has(key)) return H.refs.get(key);
+  if(fz){ const out = fz.slice(); out.slope = theilSen(completeDays(date).slice(-10).map(d => d.med)) * 0.5; H.refs.set(key, out); return out; }
   const from = addDays(date, -LOOKBACK[L]), days = completeDays(date).filter(d => d.date >= from);
   let out = null;
   if(days.length >= 3){
@@ -856,17 +863,33 @@ function arFit(r, p){
   const beta = bv.map((v, i) => v/A[i][i]);
   return { c:beta[0], phi:beta.slice(1) };
 }
+// ARIMA(1,1,1) on log prices = ARMA(1,1) with a constant on hourly log returns. Conditional sum of squares,
+// coarse grid then a finer grid around the best (φ, θ).
+function arimaFit(r){
+  if(r.length < 80) return null;
+  const mu = mean(r), x = r.map(v => v - mu);
+  const css = (phi, th) => { let e = 0, s = 0; for(let i = 1; i < x.length; i++){ e = x[i] - phi*x[i-1] - th*e; s += e*e; } return s; };
+  let best = { phi:0, theta:0, s:css(0, 0) };
+  const scan = (c1, c2, step, w) => { for(let a = c1 - w; a <= c1 + w + 1e-9; a += step) for(let b = c2 - w; b <= c2 + w + 1e-9; b += step){
+    if(Math.abs(a) > .95 || Math.abs(b) > .95) continue; const v = css(a, b); if(v < best.s) best = { phi:a, theta:b, s:v }; } };
+  scan(0, 0, .1, .9); scan(best.phi, best.theta, .02, .1);
+  return { mu, phi:best.phi, theta:best.theta };
+}
 // Parameters fitted on the look-back window that ends at the start of `date` (cached per day).
-function fitFor(H, kind, L, date, extra){
+// With `frozen`, the parameters saved at the last "Update models" are used instead of re-fitting.
+function fitFor(H, kind, L, date, extra, frozen){
+  const lo = idxOfDate(H, addDays(date, -LOOKBACK[L])), fz = frozen && frozen[[kind, L, extra].join('|')];
+  if(fz) return { ...fz, lo };
   const key = [kind, L, date, extra].join('|'); if(H.fits.has(key)) return H.fits.get(key);
-  const hi = idxOfDate(H, date), lo = idxOfDate(H, addDays(date, -LOOKBACK[L]));
+  const hi = idxOfDate(H, date), rets = () => { const r = []; for(let i = lo + 1; i < hi; i++) r.push(H.ly[i] - H.ly[i-1]); return r; };
   let f = null;
   if(kind === 'ets' && hi - lo >= 50) f = etsFit(H.y.slice(lo, hi), extra);
-  if(kind === 'ar' && hi - lo >= 80){ const r = []; for(let i = lo + 1; i < hi; i++) r.push(H.ly[i] - H.ly[i-1]); f = arFit(r, +extra); }
+  if(kind === 'ar' && hi - lo >= 80) f = arFit(rets(), +extra);
+  if(kind === 'arima' && hi - lo >= 80) f = arimaFit(rets());
   if(f) f.lo = lo;
   H.fits.set(key, f); return f;
 }
-function parseModel(id){ const [fam, a, b] = id.split(':'); return { id, fam, L:LOOKBACK[a] ? a : null, w:fam === 'shrunk' ? +b : null, kind:fam === 'ets' ? b : null, p:fam === 'ar' ? +b : null, N:fam === 'drift' ? +a : null }; }
+function parseModel(id){ const [fam, a, b] = (id || 'naive').split(':'); return { id, fam, L:LOOKBACK[a] ? a : null, w:fam === 'shrunk' ? +b : null, kind:fam === 'ets' ? b : null, p:fam === 'ar' ? +b : null, N:fam === 'drift' ? +a : null }; }
 // Forecast prices for `targets` ([{ h: trading hours ahead, s: slot, k: trading days ahead }]) made at hourly index j.
 // `price` = latest close at the origin (may be later than H.y[j] inside the current hour), `date` = origin date, `s0` = its slot.
 function predict(M, H, j, o, targets){
@@ -874,7 +897,7 @@ function predict(M, H, j, o, targets){
   switch(M.fam){
     case 'naive': return targets.map(() => price);
     case 'pattern': case 'shrunk': {
-      const rel = refRel(H, date, M.L); if(!rel) return null;
+      const rel = refRel(H, date, M.L, o.frozen); if(!rel) return null;
       if(M.fam === 'shrunk') return targets.map(g => price*(1 + M.w*(rel[g.s] - rel[s0])/100));
       const anchor = price/(1 + rel[s0]/100);
       return targets.map(g => (anchor + rel.slope*g.k)*(1 + rel[g.s]/100));
@@ -890,20 +913,28 @@ function predict(M, H, j, o, targets){
       return targets.map(g => price*Math.exp(mu*g.h));
     }
     case 'ets': {
-      const f = fitFor(H, 'ets', M.L, date, M.kind); if(!f) return null;
+      const f = fitFor(H, 'ets', M.L, date, M.kind, o.frozen); if(!f) return null;
       let Lv = H.y[f.lo], T = 0;
       for(let i = f.lo + 1; i <= j; i++){ const Lp = Lv; Lv = f.a*H.y[i] + (1-f.a)*(Lv + f.phi*T); T = f.b*(Lv - Lp) + (1-f.b)*f.phi*T; }
       if(price !== H.y[j]){ const Lp = Lv; Lv = f.a*price + (1-f.a)*(Lv + f.phi*T); T = f.b*(Lv - Lp) + (1-f.b)*f.phi*T; }
       return targets.map(g => Lv + phiSum(f.phi, g.h)*T);
     }
     case 'ar': {
-      const f = fitFor(H, 'ar', M.L, date, M.p); if(!f || j < M.p + 1) return null;
+      const f = fitFor(H, 'ar', M.L, date, M.p, o.frozen); if(!f || j < M.p + 1) return null;
       const hist = []; for(let m = M.p; m >= 1; m--) hist.push(H.ly[j-m+1] - H.ly[j-m]);
       const path = [Math.log(price)];
       for(let h = 1; h <= Math.ceil(Math.max(...targets.map(g => g.h))); h++){
         let nx = f.c; for(let m = 0; m < M.p; m++) nx += f.phi[m]*hist[hist.length-1-m];
         hist.push(nx); path.push(path[h-1] + nx);
       }
+      return targets.map(g => { const a = Math.floor(g.h), fr = g.h - a; return Math.exp(path[a] + (fr ? (path[a+1] - path[a])*fr : 0)); });
+    }
+    case 'arima': {
+      const f = fitFor(H, 'arima', M.L, date, '', o.frozen); if(!f || j < 2) return null;
+      let e = 0; for(let i = Math.max(f.lo + 1, j - 400) + 1; i <= j; i++){ const x = H.ly[i] - H.ly[i-1] - f.mu, xp = H.ly[i-1] - H.ly[i-2] - f.mu; e = x - f.phi*xp - f.theta*e; }
+      const x0 = H.ly[j] - H.ly[j-1] - f.mu, path = [Math.log(price)];
+      let xh = f.phi*x0 + f.theta*e;
+      for(let h = 1; h <= Math.ceil(Math.max(...targets.map(g => g.h))); h++){ path.push(path[h-1] + f.mu + xh); xh *= f.phi; }
       return targets.map(g => { const a = Math.floor(g.h), fr = g.h - a; return Math.exp(path[a] + (fr ? (path[a+1] - path[a])*fr : 0)); });
     }
     case 'ens': {
@@ -918,6 +949,7 @@ function candidateIds(){
   for(const L in LOOKBACK){ ids.push('pattern:' + L); for(const w of [0.25, 0.5, 0.75, 1]) ids.push(`shrunk:${L}:${w}`);
     for(const k of ['ses','linear','damped']) ids.push(`ets:${L}:${k}`); for(const p of [1,2,3]) ids.push(`ar:${L}:${p}`); }
   for(const N of [5, 10, 20]) ids.push('drift:' + N);
+  for(const L of ['1m', '3m', '6m']) ids.push('arima:' + L);
   return ids;
 }
 function modelLabel(id){
@@ -952,10 +984,13 @@ async function retrainAndSelect(){
   try{
     const dates = [...new Set(H.date)], scoreDates = dates.slice(-SCORE_DAYS), first = idxOfDate(H, scoreDates[0]);
     const origins = []; for(let j = first; j < H.y.length - 1; j++) origins.push(j);
-    const res = [], keep = S.model; S.model = null;
+    const res = [], missing = [], keep = S.model; S.model = null;
     let t0 = performance.now();
     for(const id of candidateIds()){
-      const r = scoreModel(H, parseModel(id), origins); if(r) res.push({ id, ...r });
+      const M = parseModel(id);
+      // The look-back must be fully stored before the first scoring day (a few days' slack for weekends).
+      if(M.L && H.date[0] > addDays(scoreDates[0], -LOOKBACK[M.L] + 4)){ missing.push(id); continue; }
+      const r = scoreModel(H, M, origins); if(r) res.push({ id, ...r }); else missing.push(id);
       if(performance.now() - t0 > 40){ await sleep(0); t0 = performance.now(); }   // keep the page responsive
     }
     const bestOf = fam => res.filter(r => r.id.startsWith(fam + ':')).sort((a,b) => a.mae - b.mae)[0];
@@ -973,8 +1008,16 @@ async function retrainAndSelect(){
     res.sort((a,b) => a.mae - b.mae);
     // A model replaces "no change" only if it is at least 1% more accurate AND better on most days (t ≥ 2); otherwise the gain is luck.
     const win = res.find(r => r.id === 'naive' || (r.skill >= MARGIN && r.t >= T_MIN)), auto = win.id;
-    const saved = { date:thai().date, at:nowMs(), oldest:dates[0], from:scoreDates[0], to:scoreDates[scoreDates.length-1], origins:origins.length, auto, ens,
-      board:res.map(r => ({ id:r.id, mae:r.mae, rmse:r.rmse, skill:r.skill, t:r.t, e80:r.e80, e95:r.e95 })) };
+    // Freeze every model's parameters, fitted on the look-back that ends now; they stay fixed until the next update.
+    const next = addDays(thai().date, 1), params = {}, r4 = v => Math.round(v*1e4)/1e4;
+    for(const r of res){
+      const M = parseModel(r.id);
+      if(M.fam === 'pattern' || M.fam === 'shrunk'){ const rel = refRel(H, next, M.L); if(rel) params['rel|' + M.L] = rel.map(r4); }
+      const kind = { ets:M.kind, ar:M.p, arima:'' }[M.fam];
+      if(kind !== undefined){ const f = fitFor(H, M.fam, M.L, next, kind); if(f){ const { lo, sse, ...p } = f; params[[M.fam, M.L, kind].join('|')] = p; } }
+    }
+    const saved = { date:thai().date, at:nowMs(), oldest:dates[0], from:scoreDates[0], to:scoreDates[scoreDates.length-1], origins:origins.length, auto, ens, missing, params,
+      board:res.map(r => ({ id:r.id, mae:r.mae, rmse:r.rmse, skill:r.skill, t:r.t, e80:r.e80.map(v => v == null ? v : r4(v)), e95:r.e95.map(v => v == null ? v : r4(v)) })) };
     store.set(K.model, JSON.stringify(saved));
     applyModel(saved);
   } finally { S.training = false; }
@@ -983,13 +1026,18 @@ async function retrainAndSelect(){
 function applyModel(saved){
   if(!saved || !saved.board) { S.model = null; return; }
   const id = saved.board.some(r => r.id === prefs.model) ? prefs.model : saved.auto, r = saved.board.find(x => x.id === id);
-  S.model = { ...saved, id, row:r, manual:id !== saved.auto };
+  S.model = { ...saved, id, row:r, manual:prefs.model !== 'auto' && id === prefs.model };
 }
-// Retrain once a day, and again when more history has been stored.
+// Models are updated by the user ("Update models", about monthly). Only the very first training runs by itself.
 function maybeRetrain(){
-  if(S.training || S.syncing || !S.key) return;
-  const s = S.model, H = hourly(); if(H.y.length < 200) return;
-  if(!s || s.date !== thai().date || s.oldest !== H.date[0]) setTimeout(retrainAndSelect, 50);
+  if(S.training || S.syncing || !S.key || S.model) return;
+  if(hourly().y.length >= 200) setTimeout(retrainAndSelect, 50);
+}
+async function updateModels(){
+  const n = candidateIds().length + 1;
+  if(!confirm(`Update models?\n\nRe-fit all ${n} models on the stored history (up to 6 months), test each one on the last ${SCORE_DAYS} trading days, and pick the most accurate.\n\nUses stored data only (no API calls) and takes a few seconds. Your manual choice, if any, is kept.`)) return;
+  if(S.meta.oldestBar && !S.meta.limitReached && S.meta.oldestBar.slice(0,10) > targetDate()) await sync();   // fetch older history first if missing
+  await retrainAndSelect();
 }
 // Error band for h trading hours ahead from the model's own past errors (beyond 24 h: grows with √h).
 function errAt(arr, h){
@@ -1464,27 +1512,36 @@ function logCard(){
     `Direction right ${dirOk}/${dirN} days` + (bN ? ` · best buy hour ✓ ${bOk}/${bN}` : '') + (sN ? ` · best sell hour ✓ ${sOk}/${sN}` : '') +
     ` · daily gap ${dayGaps.map(x => x.toFixed(2)).join(' · ')}%`);
 }
-// Model leaderboard: the best settings of each model family, ranked by error; ★ = the model drawing the forecast.
+// Forecast model card: pick any model and setting (or Auto), see every model's tested error, update models on demand.
 function modelCard(){
   const m = S.model, busy = S.training;
-  const btns = `<span><button class="btn" id="retrainBtn" ${busy ? 'disabled' : ''}>${busy ? 'Retraining…' : 'Retrain now'}</button>` +
-    (m && m.manual ? ` <button class="btn" id="autoModelBtn">Use best (auto)</button>` : '') + '</span>';
-  if(!m) return `<div class="card wide"><div class="modelhead"><div class="k">Forecast model</div>${btns}</div><div class="s">${busy ? 'Training every model on the stored history…' : 'Not trained yet: needs a few weeks of stored history.'}</div></div>`;
-  const fam = id => id.split(':')[0], rows = [];
-  for(const f of Object.keys(FAM)){
-    const r = fam(m.id) === f ? m.row : m.board.filter(x => fam(x.id) === f).sort((a,b) => a.mae - b.mae)[0];
-    if(r) rows.push(r);
-  }
-  rows.sort((a,b) => a.mae - b.mae);
-  const at = thai(m.at), name = id => FAM[fam(id)].name;
-  const body = rows.map(r => `<tr class="mrow ${r.id === m.id ? 'sel' : ''}" data-model="${r.id}" title="${FAM[fam(r.id)].why} Click to use this model.">` +
-    `<td>${r.id === m.id ? '<span class="best">★</span> ' : ''}<b>${name(r.id)}</b></td><td class="m">${modelLabel(r.id)}</td>` +
-    `<td>${usd(r.mae)}</td><td>${usd(r.rmse)}</td><td class="${r.skill > 0.001 ? 'up' : r.skill < -0.001 ? 'down' : ''}">${r.id === 'naive' ? 'baseline' : pct(r.skill*100, 1) + (r.skill >= MARGIN ? (r.t >= T_MIN ? ' ✓' : ' <span class="m">(luck?)</span>') : '')}</td></tr>`).join('');
-  const why = m.manual ? 'chosen by you' : m.id === m.board[0].id ? 'lowest error' : m.id === 'naive' ? 'no model beat it reliably' : 'most accurate reliable model';
-  return `<div class="card wide"><div class="modelhead"><div class="k">Forecast model · in use: <span style="color:var(--text)">★ ${name(m.id)}</span> (${why})</div>${btns}</div>` +
-    `<div class="tscroll"><table class="btable"><thead><tr><th>Model</th><th>Best settings</th><th>Avg error (MAE)</th><th>RMSE</th><th title="Less error than 'no change' = positive. ✓ = better on most test days, so it is used">vs no change</th></tr></thead><tbody>${body}</tbody></table></div>` +
-    `<div class="s">Each model was re-fitted and tested on ${m.origins} hourly forecasts (${m.from.slice(8)}/${m.from.slice(5,7)} → ${m.to.slice(8)}/${m.to.slice(5,7)}, 1–24 trading hours ahead, only earlier data used; look-back up to 6 months).` +
-    ` Retrained ${at.date.slice(8)}/${at.date.slice(5,7)} ${at.time}. The chosen model draws the purple line and its band (80% of its past errors); the buy/sell hours still come from the daily pattern.</div></div>`;
+  const upd = `<button class="btn" id="updModelsBtn" ${busy ? 'disabled' : ''}>${busy ? 'Updating models…' : 'Update models…'}</button>`;
+  if(!m) return `<div class="card wide"><div class="modelhead"><div class="k">Forecast model</div>${upd}</div><div class="s">${busy ? 'Training every model on the stored history…' : 'Not trained yet: needs a few weeks of stored history.'}</div></div>`;
+  const fam = id => id.split(':')[0], name = id => FAM[fam(id)].name, sk = r => r.id === 'naive' ? 'baseline' : pct(r.skill*100, 1);
+  const auto = prefs.model === 'auto' || !m.manual, cur = m.id, curFam = fam(cur);
+  const age = Math.floor((dayEpoch(thai().date) - dayEpoch(m.date))/86400), at = thai(m.at);
+  const due = age >= 30 ? ` <span class="tag amber">Update recommended (monthly)</span>` : '';
+  const famOpts = `<option value="auto" ${auto ? 'selected' : ''}>Auto — most accurate reliable model</option>` + Object.keys(FAM).map(f => {
+    const rs = m.board.filter(r => fam(r.id) === f), bestR = rs.sort((a,b) => a.mae - b.mae)[0];
+    return `<option value="${f}" ${!auto && f === curFam ? 'selected' : ''} ${bestR ? '' : 'disabled'}>${FAM[f].name}${bestR ? ` — best ${usd(bestR.mae)}` : ' — needs more data'}</option>`;
+  }).join('');
+  const setFam = curFam;
+  const setOpts = [...m.board.filter(r => fam(r.id) === setFam).sort((a,b) => a.mae - b.mae).map(r =>
+      `<option value="${r.id}" ${r.id === cur ? 'selected' : ''}>${modelLabel(r.id)} — error ${usd(r.mae)} · ${sk(r)}</option>`),
+    ...(m.missing || []).filter(id => fam(id) === setFam).map(id => `<option disabled>${modelLabel(id)} — needs more data</option>`)].join('');
+  const rows = m.board.map((r, i) => `<tr class="mrow ${r.id === cur ? 'sel' : ''}" data-model="${r.id}" title="${FAM[fam(r.id)].why} Click to use.">` +
+    `<td>${i + 1}</td><td>${r.id === cur ? '<span class="best">★</span> ' : ''}${name(r.id)}</td><td class="m">${modelLabel(r.id)}</td><td>${usd(r.mae)}</td><td>${usd(r.rmse)}</td>` +
+    `<td class="${r.skill > 0.001 ? 'up' : r.skill < -0.001 ? 'down' : ''}">${sk(r)}${r.id !== 'naive' && r.skill >= MARGIN ? (r.t >= T_MIN ? ' ✓' : ' <span class="m">(luck?)</span>') : ''}</td></tr>`).join('');
+  const why = !auto ? 'your choice' : cur === 'naive' && m.board[0].id !== 'naive' ? 'Auto: no model beat it reliably' : 'Auto: most accurate';
+  return `<div class="card wide"><div class="modelhead"><div class="k">Forecast model · in use: <span style="color:var(--text)">★ ${name(cur)} ${cur.includes(':') ? '(' + modelLabel(cur) + ')' : ''}</span> · ${why}${due}</div>${upd}</div>` +
+    `<div class="mpick"><label>Model <select id="famSel">${famOpts}</select></label>` +
+    (auto ? '' : `<label>Setting <select id="setSel">${setOpts}</select></label>`) + `</div>` +
+    `<div class="s">${FAM[curFam].why} Tested error ${usd(m.row.mae)} (RMSE ${usd(m.row.rmse)}) · ${cur === 'naive' ? 'the baseline' : sk(m.row) + ' vs no change'}.</div>` +
+    `<details id="allModels" ${S.allOpen ? 'open' : ''}><summary>All ${m.board.length} models and settings, ranked by tested error</summary><div class="tscroll"><table class="btable">` +
+    `<thead><tr><th>#</th><th>Model</th><th>Setting</th><th>Avg error (MAE)</th><th>RMSE</th><th title="Positive = less error than no change. ✓ = better on most test days">vs no change</th></tr></thead><tbody>${rows}</tbody></table></div></details>` +
+    `<div class="s">Last updated ${at.date.slice(8)}/${at.date.slice(5,7)} ${at.time} (${age === 0 ? 'today' : age + ' day' + (age > 1 ? 's' : '') + ' ago'}): every model was fitted on up to 6 months of history and tested on ${m.origins} hourly forecasts ` +
+    `(${m.from.slice(8)}/${m.from.slice(5,7)} → ${m.to.slice(8)}/${m.to.slice(5,7)}, 1–24 trading hours ahead, only earlier data used). Fitted settings stay fixed until you press <b>Update models</b> (about once a month); new prices still move the forecast.` +
+    ` The chosen model draws the purple line and its band (80% of its past errors); buy/sell hours come from the daily pattern.</div></div>`;
 }
 function renderPanels(){
   const F = S.fc;
@@ -1832,13 +1889,21 @@ $('cards').addEventListener('click', e => {
   const bt = e.target.closest('#btSeg button');
   if(bt){ prefs.btDays = +bt.dataset.v; savePrefs(); refresh();
     if(S.meta.oldestBar && S.meta.oldestBar.slice(0,10) > targetDate() && !S.meta.limitReached) sync(); return; }
-  if(e.target.closest('#retrainBtn')){ retrainAndSelect(); return; }
-  if(e.target.closest('#autoModelBtn')){ prefs.model = 'auto'; savePrefs(); applyModel(S.model); refresh(); return; }
+  if(e.target.closest('#updModelsBtn')){ updateModels(); return; }
   const mr = e.target.closest('[data-model]');
-  if(mr){ prefs.model = mr.dataset.model; savePrefs(); applyModel(S.model); refresh(); return; }
+  if(mr){ useModel(mr.dataset.model); return; }
   const use = e.target.closest('[data-use-ref]');
   if(use){ prefs.ref = +use.dataset.useRef; prefs.weekday = use.dataset.useWd === '1'; savePrefs(); renderTabs(); refresh(); }
 });
+const useModel = id => { prefs.model = id; savePrefs(); applyModel(S.model); refresh(); };
+$('cards').addEventListener('change', e => {
+  if(e.target.id === 'famSel'){
+    const f = e.target.value; if(f === 'auto') return useModel('auto');
+    const r = S.model.board.filter(x => x.id.split(':')[0] === f).sort((a,b) => a.mae - b.mae)[0]; if(r) useModel(r.id);
+  }
+  if(e.target.id === 'setSel') useModel(e.target.value);
+});
+$('cards').addEventListener('toggle', e => { if(e.target.id === 'allModels') S.allOpen = e.target.open; }, true);
 $('rangeChk').addEventListener('change', e => { prefs.showRange = e.target.checked; savePrefs(); draw(true); });
 $('barSeg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; prefs.bar = b.dataset.v === 'auto' ? 'auto' : +b.dataset.v; savePrefs(); draw(true); });
 $('unitSeg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; prefs.unit = b.dataset.v; savePrefs(); renderTabs(); draw(true); });
@@ -1870,7 +1935,7 @@ async function boot(){
   if(prefs.tab === 'trk') relayStatus();
   scheduleLive();
 }
-window.GH = { S, prefs, retrainAndSelect, hourly, predict, parseModel, scoreModel, applyModel, latestAt, tradingShift, forecast, computeOdds, clearOdds(){ oddsCache.key = ''; caseCache.clear(); }, buildCases, oddsFrom, binomTail, verdict, scanSettings, resetScan(){ scanCache.key = ''; }, refresh, sync, liveTick, ingest, forecast, draw, trackPosition, relay, setNow(ms){ S.fakeNow = ms; }, setApi(fn){ S.apiOverride = fn; },
+window.GH = { S, prefs, retrainAndSelect, updateModels, arimaFit, hourly, predict, parseModel, scoreModel, applyModel, latestAt, tradingShift, forecast, computeOdds, clearOdds(){ oddsCache.key = ''; caseCache.clear(); }, buildCases, oddsFrom, binomTail, verdict, scanSettings, resetScan(){ scanCache.key = ''; }, refresh, sync, liveTick, ingest, forecast, draw, trackPosition, relay, setNow(ms){ S.fakeNow = ms; }, setApi(fn){ S.apiOverride = fn; },
   async wipe(){ S.days.clear(); Object.assign(S.meta, { lastBar:null, oldestBar:null, checkedAt:0, backfillDone:false, limitReached:false, holeStart:null, holeEnd:null });
     await idb('days','readwrite', st => { st.clear(); }); await idb('meta','readwrite', st => { st.clear(); }); } };
 boot();
