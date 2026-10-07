@@ -1,0 +1,1597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gold Live &amp; Forecast</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --text:#14171c; --muted:#5d6673; --border:#dfe3e8; --grid:#eef0f3; --accent:#b8860b;
+  --up:#089981; --down:#f23645; --proj:#7b61ff; --trend:#8a94a0; --live:#16a34a; --stale:#9aa3ad;
+  --band-iqr:rgba(123,97,255,.30); --band-range:rgba(123,97,255,.10); --band-edge:rgba(123,97,255,.55); --cone:rgba(123,97,255,.13); 
+  --buy:#2962ff; --buy-best:rgba(41,98,255,.16); --buy-2nd:rgba(41,98,255,.07);
+  --sell:#e65100; --sell-best:rgba(230,81,0,.15); --sell-2nd:rgba(230,81,0,.07);
+  --err-bg:#fdecea; --err:#b91c1c;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1216; --surface:#171b21; --text:#e7eaee; --muted:#99a3ae; --border:#2a313a; --grid:#1f252c; --accent:#e0b44c;
+    --up:#26a69a; --down:#ef5350; --proj:#a78bfa; --trend:#7d8794; --live:#22c55e; --stale:#5f6872;
+    --band-iqr:rgba(167,139,250,.30); --band-range:rgba(167,139,250,.10); --band-edge:rgba(167,139,250,.6); --cone:rgba(167,139,250,.14);
+    --buy:#5b8cff; --buy-best:rgba(91,140,255,.18); --buy-2nd:rgba(91,140,255,.08);
+    --sell:#ff8a50; --sell-best:rgba(255,138,80,.17); --sell-2nd:rgba(255,138,80,.08);
+    --err-bg:#3a1714; --err:#ff8a80;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1216; --surface:#171b21; --text:#e7eaee; --muted:#99a3ae; --border:#2a313a; --grid:#1f252c; --accent:#e0b44c;
+  --up:#26a69a; --down:#ef5350; --proj:#a78bfa; --trend:#7d8794; --live:#22c55e; --stale:#5f6872;
+  --band-iqr:rgba(167,139,250,.30); --band-range:rgba(167,139,250,.10); --band-edge:rgba(167,139,250,.6); --cone:rgba(167,139,250,.14);
+  --buy:#5b8cff; --buy-best:rgba(91,140,255,.18); --buy-2nd:rgba(91,140,255,.08);
+  --sell:#ff8a50; --sell-best:rgba(255,138,80,.17); --sell-2nd:rgba(255,138,80,.08);
+  --err-bg:#3a1714; --err:#ff8a80;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:1600px;margin:0 auto;padding:16px 16px 28px}
+header{display:flex;flex-wrap:wrap;gap:8px 24px;align-items:flex-end;justify-content:space-between;margin-bottom:12px}
+h1{margin:0;font-size:20px;font-weight:650;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:13px;margin-top:2px}
+.hdr-right{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:flex-end}
+.price{text-align:right}
+.price .v{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums}
+.price .d{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.bsline{margin-top:2px} .bsline b{font-weight:700} .bsline .buy b{color:var(--buy)} .bsline .sell b{color:var(--sell)}
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--stale)}
+.dot.on{background:var(--live);animation:pulse 1.6s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--live) 60%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:12px}
+.tabs button{border:0;background:none;color:var(--muted);font:inherit;font-size:14px;font-weight:600;padding:9px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
+.bar{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px}
+.grp{display:inline-flex;align-items:center;gap:6px}
+.lbl{font-size:12px;color:var(--muted);font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--text);min-width:36px;padding:6px 10px;font:inherit;font-size:13px;cursor:pointer;border-right:1px solid var(--border)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--text);color:var(--surface);font-weight:600}
+.btn{font:inherit;font-size:13px;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:8px;padding:6px 11px;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+select,input[type=password]{font:inherit;font-size:13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px}
+label.chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--text);cursor:pointer}
+.hint{font-size:12px;color:var(--muted)} .hint b{color:var(--text);font-weight:650}
+.spacer{flex:1}
+.hide{display:none!important}
+/* TradingView tab */
+.tvbox{height:calc(100vh - 230px);min-height:480px;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+#tv{flex:1;min-height:0}
+#tv .tradingview-widget-container{height:100%;width:100%}
+#tv .tradingview-widget-container__widget{height:calc(100% - 28px);width:100%}
+.tradingview-widget-copyright{font-size:11.5px;color:var(--muted);text-align:right;padding:6px 10px;line-height:16px}
+.tradingview-widget-copyright a{color:var(--muted)}
+/* Forecast tab */
+.err{display:none;background:var(--err-bg);color:var(--err);border-radius:8px;padding:9px 12px;margin-bottom:12px;font-size:13px}
+.keybox{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px}
+.keybox h2{margin:0 0 6px;font-size:15px}
+.keybox p{margin:0 0 10px;color:var(--muted);font-size:13px}
+.keybox form{display:flex;gap:8px;flex-wrap:wrap}
+.keybox input{flex:1;min-width:200px}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.card.rel{border-left:5px solid var(--stale)}
+.relnums{font-size:14px;margin:4px 0 8px;font-variant-numeric:tabular-nums}
+.relnums b{font-size:17px}
+.card.rel .seg button{padding:3px 8px;font-size:12px;min-width:0}
+.chartbar{margin-bottom:8px}
+.card.rel.lvl-green{border-left-color:var(--up)} .card.rel.lvl-amber{border-left-color:#d97706} .card.rel.lvl-red{border-left-color:var(--down)}
+.relhead{display:flex;flex-wrap:wrap;gap:8px 16px;justify-content:space-between;align-items:flex-start}
+.verdict{font-size:21px;font-weight:750;margin:2px 0}
+.ev{display:grid;grid-template-columns:auto auto 1fr;gap:6px 12px;align-items:center;margin:10px 0 4px;font-size:13px}
+.ev .el{font-weight:600;white-space:nowrap}
+.ev .et{color:var(--muted)} .ev .et b{color:var(--text)}
+.dots{display:inline-flex;flex-wrap:wrap;gap:3px;max-width:330px}
+.dots i{width:9px;height:9px;border-radius:50%;background:var(--grid);border:1px solid var(--border);display:inline-block}
+.dots i.hit{border-color:transparent}
+.sugg{margin-top:8px;font-size:13px;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,var(--accent) 10%,var(--surface))}
+.sugg .btn{margin-left:8px;padding:3px 9px}
+details{margin-top:8px;font-size:12.5px} details summary{cursor:pointer;color:var(--muted)}
+.tag{font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:2px 7px;border-radius:10px;color:#fff;margin-left:6px;text-transform:none;vertical-align:1px}
+.tag.green{background:var(--up)} .tag.amber{background:#d97706} .tag.red{background:var(--down)}
+.faded{opacity:.5}
+.cards2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-width:0}
+.card .k{font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.card .v{font-size:17px;font-weight:650;margin-top:3px;font-variant-numeric:tabular-nums}
+.card .s{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:2px}
+.card.plan{border-left:4px solid var(--accent)}
+.plan .v{font-size:18px}
+.wins{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:6px}
+.wins div{min-width:0}
+.wins .t{font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase}
+.wins .w{font-size:15px;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
+.wins .p{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.wins .pt{font-size:12.5px;font-variant-numeric:tabular-nums;margin-top:2px} .wins .pt b{font-weight:700}
+.buy{color:var(--buy)} .sell{color:var(--sell)} .up{color:var(--up)} .down{color:var(--down)}
+.chartbox{position:relative;height:65vh;min-height:440px;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+#fc{position:absolute;inset:0}
+.legend{position:absolute;left:10px;top:8px;z-index:3;font-size:12px;line-height:1.5;color:var(--text);pointer-events:none;font-variant-numeric:tabular-nums;background:color-mix(in srgb,var(--surface) 82%,transparent);padding:4px 8px;border-radius:6px;max-width:calc(100% - 90px)}
+.legend .m{color:var(--muted)}
+.empty{position:absolute;inset:0;display:none;align-items:center;justify-content:center;color:var(--muted);font-size:14px;text-align:center;padding:20px;z-index:4}
+.note{color:var(--muted);font-size:12.5px;margin-top:10px;line-height:1.55}
+#priceBox select{font-size:11px;padding:1px 4px;margin-left:6px;text-transform:none;letter-spacing:0}
+.price .d a{color:var(--accent)}
+.preview{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 10px;font-size:13px;font-variant-numeric:tabular-nums}
+.preview span b{font-weight:650}
+.ltable{width:100%;border-collapse:collapse;margin:8px 0;font-size:13px;font-variant-numeric:tabular-nums}
+.ltable th{font-size:11px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);text-align:left;padding:4px 6px;border-bottom:1px solid var(--border)}
+.ltable td{padding:7px 6px;border-bottom:1px solid var(--grid);vertical-align:middle}
+.ltable td.tp{font-size:15px;font-weight:700}
+.ltable .track{height:6px;background:var(--grid);border-radius:3px;overflow:hidden;min-width:60px}
+.ltable .fill{height:100%;border-radius:3px}
+#fc.drawing{cursor:crosshair}
+/* Model selector */
+.modelbar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin-bottom:10px}
+.modelbar .why{font-size:13px;color:var(--muted);flex:1;min-width:260px}
+.modelbar .why b{color:var(--text)}
+.btable{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:12px;font-size:13px}
+.btable caption{caption-side:top;text-align:left;font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 0 6px}
+.btable th{font-size:11px;font-weight:650;color:var(--muted);text-align:left;padding:7px 10px;border-bottom:1px solid var(--border)}
+.btable td{padding:7px 10px;border-bottom:1px solid var(--grid)}
+.btable tr.mrow{cursor:pointer} .btable tr.mrow:hover td{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+.btable tr.sel td{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.btable .best{color:var(--accent);font-weight:700}
+.mpanel{margin-bottom:12px}
+.mcard{background:var(--surface);border:1px solid var(--border);border-left:5px solid var(--stale);border-radius:10px;padding:12px 14px}
+.mcard.up{border-left-color:var(--up)} .mcard.down{border-left-color:var(--down)}
+.mcard .head{font-size:19px;font-weight:700;margin:2px 0 6px}
+.mcard ul{margin:6px 0 0;padding-left:18px;font-size:13px;color:var(--muted)}
+.rsibig{font-size:34px;font-weight:750;font-variant-numeric:tabular-nums}
+.gauge{position:relative;height:10px;border-radius:5px;background:linear-gradient(90deg,var(--up) 0 30%,var(--grid) 30% 70%,var(--down) 70% 100%);margin:6px 0 2px;max-width:420px}
+.gauge i{position:absolute;top:-4px;width:4px;height:18px;border-radius:2px;background:var(--text)}
+@media (max-width:640px){ .btable th:nth-child(2),.btable td:nth-child(2){display:none} }
+/* Target-hit odds card */
+.odds{background:var(--surface);border:1px solid var(--border);border-left:5px solid var(--stale);border-radius:10px;padding:12px 14px;margin-bottom:12px}
+.odds.good{border-left-color:var(--up)} .odds.bad{border-left-color:var(--down)} .odds.neutral{border-left-color:#d97706}
+.odds .top{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 14px;align-items:baseline}
+.odds .head{font-size:19px;font-weight:700;margin:2px 0 8px}
+.chip{font-size:12px;font-weight:650;padding:2px 9px;border-radius:12px;background:var(--grid);color:var(--text)}
+.orow{display:grid;grid-template-columns:62px 92px 1fr 150px;gap:10px;align-items:center;padding:5px 6px;border-radius:6px;font-size:13px;font-variant-numeric:tabular-nums}
+.orow.best{background:color-mix(in srgb,var(--up) 9%,transparent)}
+.orow .tg{font-weight:700;color:var(--up)} .orow .lv{font-weight:650}
+.sbar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--grid)}
+.sbar i{display:block;height:100%} .sbar .w{background:var(--up)} .sbar .l{background:var(--down)} .sbar .n{background:var(--stale);opacity:.55}
+.orow .nums{font-size:12px;color:var(--muted)} .orow .nums b{color:var(--up)} .orow .nums em{font-style:normal;color:var(--down)}
+.okey{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11.5px;color:var(--muted);margin-top:6px}
+.okey i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.acc{margin-top:8px;font-size:12.5px} .acc .g{color:var(--up);font-weight:650} .acc .f{color:#d97706;font-weight:650} .acc .p{color:var(--down);font-weight:650}
+#advBox{margin-top:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 12px}
+#advBox > summary{cursor:pointer;font-weight:650;color:var(--muted);padding:4px 0}
+#advBox[open] > summary{margin-bottom:8px}
+#advBox .bar{border:0;padding:0 0 8px;margin:0}
+@media (max-width:640px){ .orow{grid-template-columns:52px 1fr;} .orow .sbar{grid-column:1 / -1} .orow .nums{grid-column:1 / -1} }
+/* Trade Tracker */
+.trk{display:grid;gap:12px}
+.fgrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0 10px}
+.fgrid.two{grid-template-columns:2fr 1fr}
+.fgrid label{display:flex;flex-direction:column;gap:3px;font-size:11.5px;color:var(--muted)}
+.fgrid input{font:inherit;font-size:13px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;width:100%}
+.pl{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;margin:4px 0 2px}
+.lvl{display:grid;grid-template-columns:120px 1fr auto;gap:10px;align-items:center;margin:8px 0;font-size:13px;font-variant-numeric:tabular-nums}
+.lvl .name{font-weight:650;white-space:nowrap}
+.lvl .track{height:8px;background:var(--grid);border-radius:4px;overflow:hidden}
+.lvl .fill{height:100%;border-radius:4px}
+.lvl.hit .name::after{content:" ✓";}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:10px}
+#alerts{display:flex;flex-direction:column;gap:6px}
+#alerts:not(:empty){margin-bottom:12px}
+.alert{display:flex;gap:10px;align-items:flex-start;border-radius:8px;padding:9px 12px;font-size:13px;border:1px solid transparent}
+.alert .x{margin-left:auto;background:none;border:0;color:inherit;font-size:16px;cursor:pointer;line-height:1}
+.alert.tp{background:color-mix(in srgb,var(--up) 14%,var(--surface));color:var(--up);border-color:color-mix(in srgb,var(--up) 40%,transparent)}
+.alert.sl{background:color-mix(in srgb,var(--down) 14%,var(--surface));color:var(--down);border-color:color-mix(in srgb,var(--down) 40%,transparent)}
+@media (max-width:760px){ .ltable th:nth-child(3),.ltable td:nth-child(3){display:none} .fgrid{grid-template-columns:repeat(2,minmax(0,1fr))} .fgrid.two{grid-template-columns:1fr} .lvl{grid-template-columns:150px 1fr} .lvl .d{grid-column:1 / -1;color:var(--muted);margin-top:-4px} }
+footer{display:flex;flex-wrap:wrap;gap:6px 16px;color:var(--muted);font-size:12px;margin-top:12px}
+footer a{color:var(--muted)}
+@media (max-width:900px){ .cards{grid-template-columns:1fr} .cards2{grid-template-columns:1fr} .ev{grid-template-columns:1fr} .ev .el{margin-top:6px} }
+@media (max-width:560px){ .cards{grid-template-columns:1fr} .wins{grid-template-columns:repeat(2,minmax(0,1fr))} .price{text-align:left} .seg button{min-width:30px;padding:6px 8px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Gold (XAU/USD)</h1>
+      <div class="sub" id="subtitle">Thai time (UTC+7)</div>
+    </div>
+    <div class="hdr-right">
+      <div class="price" id="priceBox">
+        <div class="badge"><span class="dot" id="dot"></span><span id="badge">Price</span>
+          <select id="pollSel" title="How often prices refresh (all tabs)"><option value="1">every 1 min</option><option value="2">every 2 min</option><option value="5">every 5 min</option></select></div>
+        <div class="v" id="pv">—</div>
+        <div class="d" id="pd">&nbsp;</div>
+        <div class="d bsline" id="pbs"></div>
+      </div>
+      <div class="grp"><span class="lbl">Theme</span>
+        <div class="seg" id="themeSeg"><button data-v="auto">Auto</button><button data-v="light">Light</button><button data-v="dark">Dark</button></div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="fc">Buy / Sell forecast</button>
+    <button role="tab" data-tab="trk">Trade Tracker</button>
+    <button role="tab" data-tab="tv">Live chart (TradingView)</button>
+  </nav>
+
+  <div id="alerts"></div>
+  <div class="err" id="err"></div>
+  <div class="keybox hide" id="keybox">
+    <h2>Connect to Twelve Data</h2>
+    <p>The forecast and Trade Tracker need gold prices. Paste your free Twelve Data API key (twelvedata.com → API Keys). It stays in this browser only.</p>
+    <form id="keyform">
+      <input type="password" id="keyin" placeholder="API key" autocomplete="off">
+      <button class="btn primary" type="submit">Save &amp; load</button>
+    </form>
+  </div>
+
+  <!-- Tab: Forecast -->
+  <section id="tabFc" class="hide">
+    <div class="cards" id="cards"></div>
+    <div class="cards2" id="dayCards"></div>
+
+    <div class="bar chartbar">
+      <div class="grp"><span class="lbl">Based on</span>
+        <div class="seg" id="refSeg"><button data-v="7">1 week</button><button data-v="14">2 weeks</button><button data-v="30">1 month</button><button data-v="91">3 months</button><button data-v="182">6 months</button></div></div>
+      <label class="chk"><input type="checkbox" id="wdChk"> Same weekday only</label>
+      <div class="grp"><span class="lbl">Bars</span>
+        <div class="seg" id="barSeg"><button data-v="auto">Auto</button><button data-v="5">5m</button><button data-v="10">10m</button><button data-v="30">30m</button><button data-v="60">1h</button></div></div>
+      <div class="grp"><span class="lbl">Y</span>
+        <div class="seg" id="unitSeg"><button data-v="usd">USD</button><button data-v="pct">% vs now</button></div></div>
+      <label class="chk"><input type="checkbox" id="rangeChk"> Min–max band</label>
+      <span class="spacer"></span>
+      <button class="btn" id="nowBtn">Now ⟶</button>
+    </div>
+    <div class="chartbox">
+      <div id="fc"></div>
+      <div class="legend" id="legend"></div>
+      <div class="empty" id="empty"></div>
+    </div>
+
+    <div class="note" id="fcNote">
+      Candles = actual 5-minute prices (re-grouped as you zoom). <b style="color:var(--proj)">Purple line</b>: over the <b>last 5 trading days</b> it shows, for each day, what this method predicted 24 trading hours earlier (compare it with the candles);
+      from now on it is the forecast for the next 48 trading hours (weekends and the daily break are skipped), with the darker band = typical range Q1–Q3 and the lighter band = min–max (if enabled). Blue = best/2nd-best <b>buy</b> hours, orange = <b>sell</b> hours; the small boxes are the price zones.
+      <b>Buy ≈</b> = the typical lowest price within that hour on similar past days (a limit order there filled on about half of days); zone = the middle half of those lows. <b>Sell ≈</b> = the typical highest price within the hour; zone = the middle half of those highs.
+      The forecast combines the typical intraday pattern of the chosen period with a damped recent trend. It is a statistical guide, not financial advice.
+    </div>
+  </section>
+
+  <!-- Tab: Trade Tracker -->
+  <section id="tabTrk" class="hide">
+    <div class="trk">
+      <div class="card" id="trkForm">
+        <div class="k">New trade</div>
+        <form id="posForm">
+          <div class="fgrid">
+            <label>Buy price (USD/oz)<input id="pPrice" type="number" step="0.01" min="0" required></label>
+            <label>Buy time (Thai)<input id="pTime" type="datetime-local" required></label>
+            <label>Target 1 (%)<input id="pT1" type="number" step="0.1" min="0.1" required></label>
+            <label>Target 2 (%)<input id="pT2" type="number" step="0.1" min="0.1" required></label>
+            <label>Target 3 (%)<input id="pT3" type="number" step="0.1" min="0.1" required></label>
+            <label>Cut-loss (−%)<input id="pCut" type="number" step="0.1" min="0.1" required></label>
+            <label>Cost / spread (%)<input id="pCost" type="number" step="0.01" min="0" required></label>
+          </div>
+          <div class="preview" id="posPreview"></div>
+          <button class="btn primary" type="submit">Start tracking</button>
+        </form>
+      </div>
+      <div class="card hide" id="trkStatus">
+        <div class="k">Open trade</div>
+        <div class="pl" id="tPL">—</div>
+        <div class="s" id="tInfo"></div>
+        <div id="tLevels"></div>
+        <div class="row"><button class="btn" id="posClose">Close trade</button><button class="btn" id="notifBtn">Enable desktop alerts</button></div>
+        <div class="s" id="tLog"></div>
+      </div>
+      <div class="card" id="lineCard">
+        <div class="k">LINE alerts</div>
+        <p class="s">Sends LINE messages at each target and at cut-loss, even when this page is closed, through your own Google Apps Script (see <b>line-alert/SETUP.md</b>).</p>
+        <div class="fgrid two">
+          <label>Apps Script web app URL<input id="lineUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec"></label>
+          <label>Secret<input id="lineSecret" type="password" autocomplete="off"></label>
+        </div>
+        <div class="row"><button class="btn" id="lineSave">Save</button><button class="btn" id="lineTest">Send test</button><span class="s" id="lineStatus"></span></div>
+      </div>
+      <div class="card" id="usageCard">
+        <div class="k">Usage &amp; free limits</div>
+        <div id="usageBody" class="s">Press Refresh to load the current numbers.</div>
+        <div class="row"><button class="btn" id="usageBtn">Refresh</button><span class="s" id="usageAt"></span></div>
+      </div>
+      <div class="row s">
+        <span>This page checks prices at the refresh interval shown next to the price (top right); in-page alerts arrive within one refresh of the price touching a level.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tab: TradingView -->
+  <section id="tabTv" class="hide">
+    <div class="bar">
+      <div class="grp"><span class="lbl">Symbol</span>
+        <select id="symSel">
+          <option value="OANDA:XAUUSD">XAU/USD spot · OANDA</option>
+          <option value="FX_IDC:XAUUSD">XAU/USD · FX_IDC</option>
+          <option value="TVC:GOLD">Gold · TVC</option>
+        </select>
+      </div>
+      <span class="spacer"></span>
+      <span class="hint">Timeframe: TradingView's menu (top-left of the chart) · Y axis: <b>%</b> or <b>log</b> (bottom-right) · drag left for history</span>
+    </div>
+    <div class="tvbox"><div id="tv"></div></div>
+  </section>
+
+  <footer id="footer">
+    <span id="storeInfo"></span>
+    <span id="quotaInfo"></span>
+    <span class="spacer"></span>
+    <a href="#" id="changeKey">Change API key</a>
+  </footer>
+</div>
+
+<script>
+(() => {
+const LW = window.LightweightCharts;
+const API = 'https://api.twelvedata.com', SYM = 'XAU/USD', TZ = 'Asia/Bangkok';
+const LIMIT = 800, RESERVE = 50, USABLE = LIMIT - RESERVE;
+const SLOTS = 288, MIN_SLOTS = 72, WIN = 12, HORIZON_H = 48, KEEP_DAYS = 300;
+// Reliability verdict: chance-by-luck thresholds (binomial, coin flip = ½) and minimum median sell−buy edge in %
+const P_GREEN = 0.05, P_AMBER = 0.20, EDGE_GREEN = 0.05, EDGE_AMBER = 0.02;
+const K = { key:'gh.key', quota:'gh.quota', prefs:'ghv2.prefs', pos:'ghv2.pos', line:'ghv2.line' };
+
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch(e){} },
+  del(k){ try { localStorage.removeItem(k); } catch(e){} },
+  json(k){ try { return JSON.parse(this.get(k) || 'null'); } catch(e){ return null; } }
+};
+const prefs = Object.assign({ tab:'fc', symbol:'OANDA:XAUUSD', theme:'auto', ref:30, weekday:false, bar:'auto', unit:'usd', showRange:false, poll:5,
+  t1:0.5, t2:1, t3:2, cut:1, cost:0, btDays:20 },
+  store.json(K.prefs) || {});
+delete prefs.interval;
+if(![5,10,30,60].includes(+prefs.bar)) prefs.bar = 'auto';
+delete prefs.model; delete prefs.showCone; delete prefs.advChart; delete prefs.adv;
+if(![1,2,5].includes(+prefs.poll)) prefs.poll = 5;
+if(!['fc','trk','tv'].includes(prefs.tab)) prefs.tab = 'fc';
+const savePrefs = () => store.set(K.prefs, JSON.stringify(prefs));
+
+const S = {
+  key: store.get(K.key), db:null, days:new Map(),
+  meta:{ lastBar:null, oldestBar:null, checkedAt:0, backfillDone:false, limitReached:false, holeStart:null, holeEnd:null },
+  syncing:false, syncCalls:0, status:'idle', timer:null, nextAt:null, queue:Promise.resolve(), lastCall:0, spacing:8000,
+  fakeNow:null, apiOverride:null, tvMounted:false, tvDirty:true,
+  chart:null, series:{}, overlay:null, barMin:60, rebuilding:false, fc:null, maps:{},
+  pos: store.json(K.pos), line: Object.assign({ url:'', secret:'' }, store.json(K.line) || {})
+};
+const $ = id => document.getElementById(id);
+
+// ---------- helpers ----------
+const nowMs = () => S.fakeNow ?? Date.now();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function thai(ms = nowMs()){
+  const iso = new Date(ms + 7*3600e3).toISOString();
+  return { ms, date: iso.slice(0,10), time: iso.slice(11,16), dt: iso.slice(0,10)+' '+iso.slice(11,19), slot: (+iso.slice(11,13))*12 + Math.floor(+iso.slice(14,16)/5) };
+}
+const thaiMs = dt => Date.parse(dt.replace(' ','T') + '+07:00');
+const wallSec = ms => Math.floor((ms + 7*3600e3) / 1000);           // Thai wall clock expressed as UTC seconds (chart time)
+const dayEpoch = date => Date.parse(date + 'T00:00:00Z') / 1000;
+function addDays(date, n){ const d = new Date(date+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+const dow = date => new Date(date+'T00:00:00Z').getUTCDay();
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+function quant(s, p){ const i = (s.length-1)*p, lo = Math.floor(i), hi = Math.ceil(i); return s[lo] + (s[hi]-s[lo])*(i-lo); }
+function median(a){ if(!a.length) return null; return quant([...a].sort((x,y)=>x-y), .5); }
+const mean = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : null;
+const hm = s => `${String(Math.floor(s/12)).padStart(2,'0')}:${String((s%12)*5).padStart(2,'0')}`;
+const tLabel = t => { const d = new Date(t*1000).toISOString(); return `${DOW[new Date(t*1000).getUTCDay()]} ${d.slice(8,10)}/${d.slice(5,7)} ${d.slice(11,16)}`; };
+const hhmm = t => new Date(t*1000).toISOString().slice(11,16);
+function pct(v, d=2){ return v == null || !isFinite(v) ? '—' : (v>0?'+':v<0?'−':'') + Math.abs(v).toFixed(d) + '%'; }
+function usd(v){ return v == null || !isFinite(v) ? '—' : '$' + v.toLocaleString('en-US',{ minimumFractionDigits:2, maximumFractionDigits:2 }); }
+function css(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function showErr(m){ const e = $('err'); e.textContent = m || ''; e.style.display = m ? 'block' : 'none'; }
+
+const etFmt = new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', weekday:'short', hour:'numeric', hourCycle:'h23' });
+function marketOpen(ms = nowMs()){        // spot gold: Sun 18:00 → Fri 17:00 New York, daily break 17:00–18:00
+  const p = Object.fromEntries(etFmt.formatToParts(new Date(ms)).map(x => [x.type, x.value]));
+  const h = +p.hour % 24, w = p.weekday;
+  if(w === 'Sat') return false; if(w === 'Sun') return h >= 18; if(w === 'Fri') return h < 17; return h !== 17;
+}
+function nextOpen(ms = nowMs()){ let t = Math.ceil(ms/300e3)*300e3; for(let i=0; i<1200 && !marketOpen(t); i++) t += 300e3; return t + 30e3; }
+
+// ---------- theme ----------
+const darkMQ = matchMedia('(prefers-color-scheme: dark)');
+const effTheme = () => prefs.theme === 'auto' ? (darkMQ.matches ? 'dark' : 'light') : prefs.theme;
+function applyTheme(){ if(prefs.theme === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', prefs.theme); }
+
+// ---------- tab 1: TradingView widget ----------
+function mountTv(){
+  const host = $('tv'); host.innerHTML = '';
+  const box = document.createElement('div'); box.className = 'tradingview-widget-container';
+  box.innerHTML = '<div class="tradingview-widget-container__widget"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow" target="_blank">Track all markets on TradingView</a></div>';
+  const s = document.createElement('script');
+  s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js'; s.async = true;
+  s.textContent = JSON.stringify({ autosize:true, symbol:prefs.symbol, interval:'60', timezone:'Asia/Bangkok', theme:effTheme(), style:'1', locale:'en',
+    allow_symbol_change:true, withdateranges:true, hide_side_toolbar:false, details:false, calendar:false, save_image:true,
+    backgroundColor: effTheme() === 'dark' ? 'rgba(23, 27, 33, 1)' : 'rgba(255, 255, 255, 1)', support_host:'https://www.tradingview.com' });
+  box.appendChild(s); host.appendChild(box);
+  S.tvMounted = true; S.tvDirty = false;
+}
+
+// ---------- API budget (shared with index.html: same key & counter) ----------
+function quota(){ const d = new Date(nowMs()).toISOString().slice(0,10); let q = store.json(K.quota); if(!q || q.date !== d) q = { date:d, n:0 }; return q; }
+function msToReset(){ const d = new Date(nowMs()); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()+1) - d.getTime() + 60e3; }
+// When the Apps Script monitor is active it uses the same Twelve Data key (~12 calls/h), so the page keeps clear of it.
+const liveCap = () => USABLE - (S.pos && S.line.url ? 300 : 0);
+function liveInterval(){ const left = liveCap() - quota().n; return left <= 0 ? Infinity : Math.max(prefs.poll*60e3, msToReset()/left); }
+function renderQuota(){ $('quotaInfo').textContent = `API today: ${quota().n} / ${LIMIT} (${RESERVE} reserved)`; }
+async function api(params, kind){
+  const q = quota();
+  if(q.n >= (kind === 'live' ? liveCap() : LIMIT)){
+    const e = new Error(kind === 'live' ? `Live refresh paused: ${liveCap()} of ${LIMIT} calls used today (${RESERVE} kept in reserve). Resumes 07:00 Thai.` : 'Daily API limit reached. Resumes 07:00 Thai.');
+    e.budget = true; throw e;
+  }
+  q.n++; store.set(K.quota, JSON.stringify(q)); renderQuota();
+  if(S.apiOverride) return S.apiOverride(params);
+  const u = new URL(API + '/time_series');
+  Object.entries({ ...params, apikey:S.key }).forEach(([k,v]) => u.searchParams.set(k, v));
+  const r = await fetch(u), j = await r.json().catch(() => ({}));
+  if(!r.ok || j.status === 'error'){ const e = new Error(j.message || `HTTP ${r.status}`); e.status = j.code || r.status; throw e; }
+  return j;
+}
+function fetch5(extra, kind){            // one queue, calls ≥ 8 s apart (free plan: 8/min)
+  const run = async () => {
+    const wait = S.lastCall + S.spacing - Date.now(); if(wait > 0) await sleep(wait);
+    S.lastCall = Date.now();
+    try{
+      const j = await api({ symbol:SYM, interval:'5min', timezone:TZ, ...extra }, kind);
+      return (j.values || []).map(v => ({ dt:v.datetime, o:+v.open, h:+v.high, l:+v.low, c:+v.close })).filter(b => isFinite(b.c)).reverse();
+    }catch(e){ if(/no data/i.test(e.message)) return []; throw e; }
+  };
+  const p = S.queue.then(run, run); S.queue = p.catch(() => {}); return p;
+}
+
+// ---------- IndexedDB (5-min OHLC, one record per Thai day) ----------
+function openDb(){
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('goldv2', 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('days', { keyPath:'date' }); r.result.createObjectStore('meta'); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+function idb(name, mode, fn){
+  if(!S.db) return Promise.resolve(null);
+  return new Promise((res, rej) => {
+    const t = S.db.transaction(name, mode), st = t.objectStore(name); let out;
+    const req = fn(st); if(req) req.onsuccess = () => out = req.result;
+    t.oncomplete = () => res(out); t.onerror = () => rej(t.error);
+  });
+}
+const dayMed = d => median(d.c.filter(v => v != null));
+async function loadStore(){
+  try{ S.db = await openDb(); }catch(e){ S.db = null; return; }
+  (await idb('days', 'readonly', st => st.getAll()) || []).forEach(r => { r.med = dayMed(r); S.days.set(r.date, r); });
+  Object.assign(S.meta, await idb('meta', 'readonly', st => st.get('meta')) || {});
+}
+const saveMeta = () => idb('meta', 'readwrite', st => { st.put({ ...S.meta }, 'meta'); });
+async function ingest(bars){
+  if(!bars.length) return;
+  const touched = new Map(), blank = () => new Array(SLOTS).fill(null);
+  for(const b of bars){
+    const date = b.dt.slice(0,10), s = (+b.dt.slice(11,13))*12 + Math.floor(+b.dt.slice(14,16)/5);
+    let d = S.days.get(date);
+    if(!d){ d = { date, o:blank(), h:blank(), l:blank(), c:blank() }; S.days.set(date, d); }
+    d.o[s] = b.o; d.h[s] = b.h; d.l[s] = b.l; d.c[s] = b.c; touched.set(date, d);
+  }
+  touched.forEach(d => d.med = dayMed(d));
+  S.dataVer = (S.dataVer || 0) + 1;                // invalidates the odds caches
+  const m = S.meta, first = bars[0].dt, last = bars[bars.length-1].dt;
+  if(!m.lastBar || last > m.lastBar) m.lastBar = last;
+  if(!m.oldestBar || first < m.oldestBar) m.oldestBar = first;
+  await idb('days', 'readwrite', st => { touched.forEach(d => st.put({ date:d.date, o:d.o, h:d.h, l:d.l, c:d.c })); });
+  await saveMeta();
+  trackPosition(bars);
+}
+// History needed: the reference period plus ~20 trading days for the back-test.
+// History needed: the reference period plus the longer of the old back-test window and the 8-week accuracy check (+ 48 h).
+const targetDate = () => addDays(thai().date, -(prefs.ref + Math.max(Math.ceil((prefs.btDays || 20) * 1.5) + 10, 8*7 + 4)));
+async function prune(){
+  const t = addDays(thai().date, -KEEP_DAYS), old = [...S.days.keys()].filter(d => d < t);
+  old.forEach(d => S.days.delete(d));
+  if(old.length) await idb('days', 'readwrite', st => { old.forEach(d => st.delete(d)); });
+}
+const minus5 = dt => thai(thaiMs(dt) - 300e3).dt;
+async function catchUp(kind){
+  const last = S.meta.lastBar;
+  const n = last ? Math.min(5000, Math.max(3, Math.ceil((nowMs() - thaiMs(last))/300e3) + 2)) : 5000;
+  const bars = await fetch5({ outputsize:n }, kind);
+  await ingest(bars);
+  if(last && bars.length >= 5000 && bars[0].dt > last){ S.meta.holeStart = last; S.meta.holeEnd = bars[0].dt; }
+  S.meta.checkedAt = nowMs(); await saveMeta();
+}
+async function sync(){
+  if(S.syncing || !S.key) return;
+  S.syncing = true; S.syncCalls = 0; renderInfo();
+  try{
+    if(!S.meta.lastBar || nowMs() - S.meta.checkedAt > 5*60e3){ await catchUp('essential'); S.syncCalls++; refresh(); }
+    while(S.meta.holeEnd){
+      const bars = await fetch5({ outputsize:5000, end_date:minus5(S.meta.holeEnd) }, 'essential'); S.syncCalls++;
+      await ingest(bars);
+      if(!bars.length || bars[0].dt <= S.meta.holeStart) S.meta.holeStart = S.meta.holeEnd = null; else S.meta.holeEnd = bars[0].dt;
+      await saveMeta(); refresh();
+    }
+    while(S.meta.oldestBar && !S.meta.limitReached && S.meta.oldestBar.slice(0,10) > targetDate()){
+      const bars = await fetch5({ outputsize:5000, end_date:minus5(S.meta.oldestBar) }, 'essential'); S.syncCalls++;
+      if(!bars.length) S.meta.limitReached = true; else await ingest(bars);
+      await saveMeta(); refresh();
+    }
+    await prune(); showErr('');
+  }catch(e){
+    showErr(e.budget ? e.message : 'History download paused: ' + e.message + (e.status == 401 ? '' : ' (it resumes next time).'));
+  }finally{ S.syncing = false; refresh(); scheduleLive(); }
+}
+
+// ---------- live refresh: forecast & tracker tabs, or any tab while a trade is open ----------
+const wantLive = () => !!S.key && (!document.hidden || !!S.pos);
+function scheduleLive(){
+  clearTimeout(S.timer); S.timer = null; S.nextAt = null;
+  if(!wantLive() || S.status === 'stopped'){ renderHeader(); return; }
+  let at;
+  if(!marketOpen()){ S.status = 'closed'; at = nextOpen(); }
+  else {
+    const iv = liveInterval();
+    if(!isFinite(iv)){ S.status = 'budget'; at = nowMs() + msToReset(); }
+    else if(nowMs() - (S.meta.checkedAt || 0) >= iv) at = nowMs();
+    else { at = Math.floor(nowMs()/iv)*iv + 30e3; if(at <= nowMs()) at += iv; }   // aligned to bar closes + 30 s
+  }
+  S.nextAt = at; S.timer = setTimeout(liveTick, Math.min(Math.max(0, at - nowMs()), 2**31-1));
+  renderHeader();
+}
+async function liveTick(){
+  if(!wantLive()) return;
+  if(!marketOpen()){ S.status = 'closed'; return scheduleLive(); }
+  try{ await catchUp('live'); S.status = 'ok'; showErr(''); }
+  catch(e){
+    S.status = e.budget ? 'budget' : (e.status == 401 || e.status == 403) ? 'stopped' : 'error';
+    showErr(e.budget ? e.message : 'Live refresh failed: ' + e.message);
+  }
+  refresh(); scheduleLive();
+}
+
+// ---------- forecast ----------
+function completeDays(before = thai().date){
+  return [...S.days.values()].filter(d => d.date < before && d.c.filter(v => v != null).length >= MIN_SLOTS).sort((a,b) => a.date < b.date ? -1 : 1);
+}
+// Last 5-min close whose bar had finished by `ms` (used to make a forecast "as of" an earlier moment).
+function latestAt(ms){
+  const w = wallSec(ms), dates = [...S.days.keys()].filter(d => dayEpoch(d) <= w).sort().reverse();
+  for(const date of dates.slice(0, 6)){
+    const d = S.days.get(date), base = dayEpoch(date);
+    for(let s = SLOTS-1; s >= 0; s--) if(d.c[s] != null && base + s*300 + 300 <= w) return { price:d.c[s], t:base + s*300, date, s };
+  }
+  return null;
+}
+function latest(){
+  const d = S.meta.lastBar && S.days.get(S.meta.lastBar.slice(0,10)); if(!d) return null;
+  for(let s = SLOTS-1; s >= 0; s--) if(d.c[s] != null) return { price:d.c[s], t:dayEpoch(d.date) + s*300, date:d.date, s };
+  return null;
+}
+// Reference days strictly before `before`, within the chosen calendar span; optionally the same weekday only.
+function refFor(days, before, weekday){
+  const prior = days.filter(d => d.date < before); if(!prior.length) return { days:[], fallback:false };
+  const from = addDays(prior[prior.length-1].date, -(prefs.ref - 1));
+  const ref = prior.filter(d => d.date >= from);
+  if(weekday == null) return { days:ref, fallback:false };
+  const same = ref.filter(d => dow(d.date) === weekday);
+  return same.length >= 3 ? { days:same, fallback:false } : { days:ref, fallback:true };
+}
+function relStats(days){
+  const v = Array.from({ length:SLOTS }, () => []);
+  for(const d of days) d.c.forEach((x, s) => { if(x != null) v[s].push((x/d.med - 1)*100); });
+  return v.map(a => { if(a.length < 2) return null; a.sort((x,y) => x-y);
+    return { n:a.length, med:quant(a,.5), q1:quant(a,.25), q3:quant(a,.75), min:a[0], max:a[a.length-1] }; });
+}
+function theilSen(ys){
+  const sl = [];
+  for(let i = 0; i < ys.length; i++) for(let j = i+1; j < ys.length; j++) sl.push((ys[j]-ys[i])/(j-i));
+  return median(sl) || 0;
+}
+// 1-hour windows over a time-ordered list of points {t, rel, price}; only contiguous 5-min runs count.
+function windowsOf(pts){
+  const c = [];
+  for(let i = 0; i + WIN <= pts.length; i++){
+    if(pts[i+WIN-1].t - pts[i].t !== (WIN-1)*300) continue;
+    const seg = pts.slice(i, i+WIN);
+    c.push({ t0:seg[0].t, t1:seg[WIN-1].t + 300, rel:median(seg.map(p => p.rel)), price:mean(seg.map(p => p.price)), date:seg[0].date, k:seg[0].k, s0:seg[0].s });
+  }
+  return c;
+}
+function pickWindows(c){
+  if(!c.length) return {};
+  const ov = (a, b) => !!a && !!b && a.t0 < b.t1 && b.t0 < a.t1;
+  const asc = [...c].sort((a,b) => a.rel - b.rel), desc = [...asc].reverse();
+  const buy1 = asc[0], sell1 = desc.find(x => !ov(x, buy1));
+  const buy2 = asc.find(x => !ov(x, buy1) && !ov(x, sell1));
+  const sell2 = desc.find(x => !ov(x, sell1) && !ov(x, buy2) && !ov(x, buy1));
+  return { buy1, buy2, sell1, sell2 };
+}
+// Move through market-open time only (weekends and the daily break are skipped), in 5-minute steps.
+function tradingShift(ms, hours){
+  let left = Math.round(Math.abs(hours)*12), t = Math.floor(ms/300e3)*300e3, guard = 0;
+  const step = hours < 0 ? -300e3 : 300e3;
+  while(left > 0 && guard++ < 50000){ t += step; if(marketOpen(t)) left--; }
+  return t;
+}
+// forecast() = now; forecast({ originMs }) = the forecast that would have been made at that moment (only earlier data is used).
+function forecast(opts = {}){
+  const oMs = opts.originMs ?? nowMs(), now = thai(oMs);
+  const days = completeDays(now.date), L = opts.originMs != null ? latestAt(oMs) : latest();
+  if(days.length < 5 || !L) return null;
+  const slope = theilSen(days.slice(-10).map(d => d.med)) * 0.5;   // damped USD per trading day
+  const statCache = new Map();
+  const statsFor = wd => {
+    const key = prefs.weekday ? wd : 'all';
+    if(!statCache.has(key)){ const r = refFor(days, now.date, prefs.weekday ? wd : null); statCache.set(key, { st:relStats(r.days), n:r.days.length, fallback:r.fallback, days:r.days }); }
+    return statCache.get(key);
+  };
+  const base = statsFor(dow(now.date));
+  if(base.n < 3) return null;
+  // Anchor: back out today's typical median from the latest price and the usual deviation at this time of day.
+  let s0 = L.s, st0 = null; for(let i = 0; i < 24 && !st0; i++) st0 = base.st[(s0 - i + SLOTS) % SLOTS];
+  const anchor = L.price / (1 + (st0 ? st0.med : 0)/100);
+  const pts = [], dates = [];
+  const start = Math.max(Math.floor(oMs/300e3)*300e3 + 300e3, thaiMs(L.date + ' 00:00:00') + (L.s+1)*300e3);
+  for(let ms = start, open = 0; open < HORIZON_H*12 && ms < oMs + 14*86400e3; ms += 300e3){   // 48 trading hours
+    if(!marketOpen(ms)) continue;
+    open++;
+    const th = thai(ms);
+    if(!dates.includes(th.date)) dates.push(th.date);
+    const k = dates.indexOf(th.date) + (dates[0] === L.date ? 0 : 1);
+    const st = statsFor(dow(th.date)).st[th.slot]; if(!st) continue;
+    const m = anchor + slope*k, P = v => m*(1 + v/100);
+    pts.push({ t:wallSec(ms), date:th.date, k, s:th.slot, rel:st.med, price:P(st.med), q1:P(st.q1), q3:P(st.q3), min:P(st.min), max:P(st.max) });
+  }
+  const perDay = dates.map(date => {
+    const dp = pts.filter(p => p.date === date);
+    return { date, k:dp.length ? dp[0].k : 0, ...pickWindows(windowsOf(dp)) };
+  }).filter(d => d.buy1 || d.sell1).slice(0, 2);
+  // Best round trip: buy window, then a later sell window, maximising projected price gain.
+  const all = windowsOf(pts).sort((a,b) => a.t0 - b.t0);
+  let trip = null;
+  for(const b of all){
+    let s = null; for(const x of all) if(x.t0 >= b.t1 && (!s || x.price > s.price)) s = x;
+    if(s){ const g = (s.price/b.price - 1)*100; if(!trip || g > trip.gain) trip = { buy:b, sell:s, gain:g }; }
+  }
+  // Point prices: Buy ≈ the median of the LOWEST price reached inside that hour on the reference days, Sell ≈ the median of the
+  // HIGHEST price (a limit order there fills on about half of days); zone = their 25th–75th percentile. Relative to each day's median.
+  const windowPrices = w => {
+    if(!w || w.s0 == null || w.bp !== undefined) return;
+    const lows = [], highs = [];
+    for(const d of statsFor(dow(w.date)).days){
+      let lo = Infinity, hi = -Infinity, n = 0;
+      for(let s = w.s0; s < w.s0 + WIN && s < SLOTS; s++){ const l = d.l[s] ?? d.c[s], h = d.h[s] ?? d.c[s]; if(l == null || h == null) continue; lo = Math.min(lo, l); hi = Math.max(hi, h); n++; }
+      if(n >= 8){ lows.push((lo/d.med - 1)*100); highs.push((hi/d.med - 1)*100); }
+    }
+    if(lows.length < 3){ w.bp = w.sp = null; w.bz = w.sz = [null, null]; return; }
+    const m = anchor + slope*w.k, P = v => m*(1 + v/100), sl = lows.sort((a,b) => a - b), sh = highs.sort((a,b) => a - b);
+    w.bp = P(quant(sl, .5)); w.bz = [P(quant(sl, .25)), P(quant(sl, .75))];
+    w.sp = P(quant(sh, .5)); w.sz = [P(quant(sh, .25)), P(quant(sh, .75))];
+    w.nDays = lows.length;
+  };
+  perDay.forEach(d => ['buy1','buy2','sell1','sell2'].forEach(k => windowPrices(d[k])));
+  if(trip){ windowPrices(trip.buy); windowPrices(trip.sell); }
+  return { pts, perDay, trip, slope, anchor, latest:L, refN:base.n, fallback:base.fallback, recent:days.slice(-10), bt: opts.noBacktest ? null : backtest(days) };
+}
+// Back-test: for each of the last 20 complete days, pick windows from earlier days only and compare with what happened.
+function backtest(days){
+  const res = [];
+  for(const D of days.slice(-(prefs.btDays || 20))){
+    const r = refFor(days, D.date, prefs.weekday ? dow(D.date) : null); if(r.days.length < 3) continue;
+    const st = relStats(r.days), base = dayEpoch(D.date);
+    const pts = []; st.forEach((x, s) => { if(x) pts.push({ t:base + s*300, rel:x.med, price:x.med, date:D.date }); });
+    const W = pickWindows(windowsOf(pts)); if(!W.buy1 || !W.sell1) continue;
+    const actual = w => { const v = []; for(let t = w.t0; t < w.t1; t += 300){ const c = D.c[(t-base)/300]; if(c != null) v.push(c); } return v.length ? mean(v) : null; };
+    const b = actual(W.buy1), s = actual(W.sell1); if(b == null || s == null) continue;
+    res.push({ date:D.date, buyBelow: b < D.med, sellAbove: s > D.med, spread:(s/b - 1)*100,
+      buyW:`${hhmm(W.buy1.t0)}–${hhmm(W.buy1.t1)}`, sellW:`${hhmm(W.sell1.t0)}–${hhmm(W.sell1.t1)}`, buyPct:(b/D.med - 1)*100, sellPct:(s/D.med - 1)*100 });
+  }
+  if(!res.length) return null;
+  const n = res.length, kb = res.filter(x => x.buyBelow).length, ks = res.filter(x => x.sellAbove).length;
+  return { n, kb, ks, buyHit:Math.round(kb/n*100), sellHit:Math.round(ks/n*100), spread:median(res.map(x => x.spread)),
+    pBuy:binomTail(kb, n), pSell:binomTail(ks, n), days:res };
+}
+// P(X ≥ k) for X ~ Binomial(n, ½): the chance of scoring at least k hits out of n by pure luck.
+function binomTail(k, n){
+  let c = 1, sum = 0;                       // c = C(n, i)
+  for(let i = 0; i <= n; i++){ if(i >= k) sum += c; c = c * (n - i) / (i + 1); }
+  return sum / Math.pow(2, n);
+}
+// Traffic-light verdict from a back-test result.
+function verdict(bt){
+  if(!bt || bt.n < 10) return { level:'none', icon:'⚪', title:'Not enough data', msg:'Need more history before the timing can be judged.' };
+  const cost = +prefs.cost || 0, worst = Math.max(bt.pBuy, bt.pSell);
+  if(worst < P_GREEN && bt.spread > Math.max(cost, EDGE_GREEN))
+    return { level:'green', icon:'🟢', title:'Reliable', msg:'The daily rhythm has been consistent. The suggested buy/sell times are worth using.' };
+  if(worst < P_AMBER && bt.spread > EDGE_AMBER)
+    return { level:'amber', icon:'🟡', title:'Weak', msg:'Some rhythm, but not dependable. Use the times only as a hint and rely on your price targets.' };
+  return { level:'red', icon:'🔴', title:'No reliable pattern', msg:"Gold hasn't followed a daily rhythm lately. Ignore the suggested times; trade on price levels (Trade Tracker targets & cut-loss)." };
+}
+const VERDICT_RANK = { none:0, red:1, amber:2, green:3 };
+// Try every "Based on" × "Same weekday" combination on stored data (no API calls) and return the best one.
+let scanCache = { key:'', at:0, res:null };
+function scanSettings(){
+  const key = [S.meta.lastBar, S.days.size, prefs.btDays, prefs.cost].join('|');
+  if(scanCache.key === key && nowMs() - scanCache.at < 10*60e3) return scanCache.res;
+  const days = completeDays(), keep = { ref:prefs.ref, weekday:prefs.weekday }, out = [];
+  const oldest = days.length ? days[0].date : null;
+  for(const ref of [7, 14, 30, 91, 182]) for(const weekday of [false, true]){
+    prefs.ref = ref; prefs.weekday = weekday;
+    if(!oldest || oldest > addDays(thai().date, -(ref + Math.ceil(prefs.btDays * 1.5)))) continue;   // not enough history stored
+    const bt = backtest(days), v = verdict(bt);
+    if(bt) out.push({ ref, weekday, bt, v, score: Math.min(bt.buyHit, bt.sellHit) + bt.spread });
+  }
+  Object.assign(prefs, keep);
+  out.sort((a,b) => (VERDICT_RANK[b.v.level] - VERDICT_RANK[a.v.level]) || (b.score - a.score));
+  scanCache = { key, at:nowMs(), res:out };
+  return out;
+}
+
+// ---------- Target-hit odds: "if I buy now, which level is touched first within 48 h?" ----------
+// Method: replay every 30-minute moment in the stored history as a hypothetical purchase, walk forward through
+// the 5-minute highs/lows for 48 h, and record whether each target or the cut-loss was touched first.
+// Probabilities are the frequencies among past moments in the same trend condition (previous 24 h move).
+const H48 = 48*3600, STEP = 6, MIN_SAME = 150, MIN_CASES = 100;
+const REGIME_NAME = { up:'Uptrend', down:'Downtrend', side:'Sideways' };
+const regimeOf = r => r > 0.3 ? 'up' : r < -0.3 ? 'down' : 'side';
+let barsCache = { key:'', bars:null };
+function bars5(){
+  const key = S.meta.lastBar + '|' + S.days.size + '|' + (S.dataVer || 0);
+  if(barsCache.key === key) return barsCache.bars;
+  const t = [], h = [], l = [], c = [];
+  for(const d of [...S.days.values()].sort((a,b) => a.date < b.date ? -1 : 1)){
+    const base = dayEpoch(d.date);
+    for(let s = 0; s < SLOTS; s++){ const x = d.c[s]; if(x == null) continue; t.push(base + s*300); c.push(x); h.push(d.h[s] ?? x); l.push(d.l[s] ?? x); }
+  }
+  barsCache = { key, bars:{ t, h, l, c, n:t.length } };
+  return barsCache.bars;
+}
+function idxAtOrBefore(T, x){
+  if(!T.length || T[0] > x) return -1;
+  let lo = 0, hi = T.length - 1;
+  while(lo < hi){ const m = (lo + hi + 1) >> 1; if(T[m] <= x) lo = m; else hi = m - 1; }
+  return lo;
+}
+const caseCache = new Map();
+// ups: target moves in net % (after cost); down: cut-loss in net %; returns one record per 30-min start.
+function buildCases(ups, down, cost){
+  const B = bars5(), key = [barsCache.key, ups.map(u => u.toFixed(4)).join(','), down.toFixed(4), cost].join('|');
+  if(caseCache.has(key)) return caseCache.get(key);
+  const { t, h, l, c, n } = B, K = ups.length, cases = [];
+  const upMul = ups.map(u => 1 + (u + cost)/100), dnMul = 1 + (cost - down)/100;
+  for(let i = 0; i < n; i += STEP){
+    const t0 = t[i], jEnd = i + 576;                          // 48 trading hours ahead (closed-market time skipped)
+    if(jEnd >= n) break;                                      // needs a full 48 trading hours of known future
+    const jp = i - 288; if(jp < 0) continue;                  // previous 24 trading hours
+    const c0 = c[i], tgt = upMul.map(m => c0*m), cut = c0*dnMul;
+    const out = new Int8Array(K), path = new Float32Array(48);   // out: 0 neither, 1 target first, 2 cut-loss first
+    let left = K, hour = 1, lastC = c0;
+    for(let j = i + 1; j <= jEnd; j++){
+      if((j - i) % 12 === 0 && hour <= 48){ path[hour-1] = c[j]/c0 - 1; hour++; }
+      lastC = c[j];
+      if(left){
+        const cutHit = l[j] <= cut;                           // same bar touches both → counted as cut-loss (conservative)
+        for(let k = 0; k < K; k++){ if(out[k]) continue; if(cutHit){ out[k] = 2; left--; } else if(h[j] >= tgt[k]){ out[k] = 1; left--; } }
+      }
+    }
+    while(hour <= 48){ path[hour-1] = lastC/c0 - 1; hour++; }
+    cases.push({ t:t0, endT:t[jEnd], reg:regimeOf((c0/c[jp] - 1)*100), out, ret:(lastC/c0 - 1)*100 - cost, path });
+  }
+  if(caseCache.size > 6) caseCache.delete(caseCache.keys().next().value);
+  caseCache.set(key, cases);
+  return cases;
+}
+function oddsFrom(cases, K){
+  const r = Array.from({ length:K }, () => ({ win:0, loss:0, none:0, sum:0 }));
+  for(const cs of cases) for(let k = 0; k < K; k++){ const o = cs.out[k]; if(o === 1) r[k].win++; else if(o === 2) r[k].loss++; else { r[k].none++; r[k].sum += cs.ret; } }
+  return r.map(x => { const n = x.win + x.loss + x.none || 1; return { n:x.win + x.loss + x.none, pWin:x.win/n, pLoss:x.loss/n, pNone:x.none/n, avgNone:x.none ? x.sum/x.none : 0 }; });
+}
+// Cases whose start and full 48 h outcome lie inside the "Based on" window ending at endT; same trend condition if enough.
+function selectRef(cases, endT, reg){
+  const from = endT - prefs.ref*86400 - H48;
+  const pool = cases.filter(cs => cs.t >= from && cs.endT <= endT);
+  const same = pool.filter(cs => cs.reg === reg);
+  return same.length >= MIN_SAME ? { cases:same, matched:true } : { cases:pool, matched:false };
+}
+// Honesty check: for each of the last 8 weeks, predict with earlier data only and compare with what happened.
+function accuracy(cases, K, nowT){
+  let sumP = 0, sumY = 0, cnt = 0; const bins = [[0,0,0],[0,0,0],[0,0,0]];
+  for(let w = 0; w < 8; w++){
+    const testEnd = nowT - H48 - w*7*86400, testStart = testEnd - 7*86400;
+    const probs = {};
+    for(const reg of ['up','down','side']){ const r = selectRef(cases, testStart, reg); probs[reg] = r.cases.length >= MIN_CASES ? oddsFrom(r.cases, K) : null; }
+    for(const cs of cases){
+      if(cs.t < testStart || cs.t >= testEnd || !probs[cs.reg]) continue;
+      for(let k = 0; k < K; k++){
+        const p = probs[cs.reg][k].pWin, y = cs.out[k] === 1 ? 1 : 0;
+        sumP += p; sumY += y; cnt++;
+        const b = bins[p < 1/3 ? 0 : p < 2/3 ? 1 : 2]; b[0] += p; b[1] += y; b[2]++;
+      }
+    }
+  }
+  if(cnt < 200) return null;
+  const said = sumP/cnt, happened = sumY/cnt, diff = Math.abs(said - happened)*100;
+  return { said, happened, cases:Math.round(cnt/K), grade: diff <= 7 ? 'good' : diff <= 15 ? 'fair' : 'poor',
+    bins: bins.map(b => b[2] ? { said:b[0]/b[2], happened:b[1]/b[2], n:b[2] } : null) };
+}
+const quantile = (arr, p) => { const s = [...arr].sort((a,b) => a - b); return s.length ? quant(s, p) : 0; };
+const oddsCache = { key:'', res:null };
+function computeOdds(){
+  const B = bars5(); if(B.n < 600) return null;
+  const nowT = B.t[B.n-1], cur = B.c[B.n-1];
+  const jp = B.n - 1 - 288, reg = jp >= 0 ? regimeOf((cur/B.c[jp] - 1)*100) : 'side';   // previous 24 trading hours
+  const p = S.pos;
+  const key = [barsCache.key, prefs.ref, prefs.t1, prefs.t2, prefs.t3, prefs.cut, prefs.cost, p ? JSON.stringify([p.price, p.targets, p.cut, p.cost, p.fired]) : ''].join('|');
+  if(oddsCache.key === key) return oddsCache.res;
+  let res;
+  if(p){
+    // Open trade: distances from the current price to the remaining levels (levels already include the cost).
+    const cutLv = levelPrice(p, -p.cut), down = (1 - cutLv/cur)*100;
+    const rem = p.targets.map((t, i) => ({ t, i, lv:levelPrice(p, t) })).filter(x => !p.fired['t' + x.i] && x.lv > cur);
+    if(p.fired.cut || down <= 0) res = { mode:'trade', breached:true, cur, reg };
+    else if(!rem.length) res = { mode:'trade', allHit:true, cur, reg };
+    else {
+      const ups = rem.map(x => (x.lv/cur - 1)*100), cases = buildCases(ups, down, 0), ref = selectRef(cases, nowT, reg);
+      if(ref.cases.length < MIN_CASES) res = { notEnough:true };
+      else { const o = oddsFrom(ref.cases, ups.length);
+        res = { mode:'trade', cur, reg, matched:ref.matched, n:ref.cases.length, cutLv, rows:rem.map((x, k) => ({ ...x, ...o[k] })), cone:coneFrom(ref.cases) }; }
+    }
+  } else {
+    const ts = [prefs.t1, prefs.t2, prefs.t3].filter(x => x > 0).sort((a,b) => a - b), cut = +prefs.cut || 1, cost = +prefs.cost || 0;
+    const cases = buildCases(ts, cut, cost), ref = selectRef(cases, nowT, reg);
+    if(ref.cases.length < MIN_CASES) res = { notEnough:true };
+    else {
+      const o = oddsFrom(ref.cases, ts.length);
+      const rows = ts.map((t, k) => ({ t, lv:cur*(1 + (t + cost)/100), ...o[k], ev:o[k].pWin*t - o[k].pLoss*cut + o[k].pNone*o[k].avgNone }));
+      // Prefer targets more likely to be reached than to hit the cut-loss; among those, the highest expected value.
+      const likely = rows.filter(r => r.pWin > r.pLoss), best = (likely.length ? likely : rows).reduce((a, b) => b.ev > a.ev ? b : a);
+      const verdict = best.ev > 0.05 && best.pWin > best.pLoss ? 'good' : best.ev < -0.05 ? 'bad' : 'neutral';
+      res = { mode:'buy', cur, reg, matched:ref.matched, n:ref.cases.length, cut, cost, cutLv:cur*(1 + (cost - cut)/100), rows, best, verdict,
+        acc:accuracy(cases, ts.length, nowT), cone:coneFrom(ref.cases) };
+    }
+  }
+  oddsCache.key = key; oddsCache.res = res;
+  return res;
+}
+// 48 h probability cone: 10th / 50th / 90th percentile of the move after each hour, from the same past cases.
+function coneFrom(cases){
+  const out = [];
+  for(let hh = 0; hh < 48; hh++){ const v = cases.map(cs => cs.path[hh]); out.push({ p10:quantile(v, .1), p50:quantile(v, .5), p90:quantile(v, .9) }); }
+  return out;
+}
+
+// ---------- chart ----------
+const bucket =(t, B) => B === 1440 ? t - (t % 86400) : t - (t % (B*60));
+function candlesFor(B){
+  const out = new Map();
+  for(const d of [...S.days.values()].sort((a,b) => a.date < b.date ? -1 : 1)){
+    const base = dayEpoch(d.date);
+    for(let s = 0; s < SLOTS; s++){
+      const c = d.c[s]; if(c == null) continue;
+      const t = bucket(base + s*300, B), o = d.o[s] ?? c, h = d.h[s] ?? c, l = d.l[s] ?? c;
+      const x = out.get(t);
+      if(!x) out.set(t, { time:t, open:o, high:h, low:l, close:c });
+      else { x.high = Math.max(x.high, h); x.low = Math.min(x.low, l); x.close = c; }
+    }
+  }
+  return [...out.values()];
+}
+function projFor(B, pts){
+  const g = new Map();
+  for(const p of pts){ const t = bucket(p.t, B); if(!g.has(t)) g.set(t, []); g.get(t).push(p); }
+  return [...g].map(([t, a]) => ({ t, price:mean(a.map(p => p.price)), q1:mean(a.map(p => p.q1)), q3:mean(a.map(p => p.q3)),
+    min:mean(a.map(p => p.min)), max:mean(a.map(p => p.max)), date:a[0].date }));
+}
+const barName = B => B >= 60 ? B/60 + 'h' : B + 'm';
+function autoBar(spanSec){
+  const h = spanSec / 3600;
+  return h <= 12 ? 5 : h <= 48 ? 10 : h <= 168 ? 30 : 60;
+}
+
+// Overlay primitive: projection bands, buy/sell window shading with labels, and the "now" line.
+class Overlay {
+  constructor(){ this.data = { bands:[], rects:[], now:null }; this.view = new OverlayView(this); }
+  attached(p){ this.chart = p.chart; this.series = p.series; this.requestUpdate = p.requestUpdate; }
+  detached(){}
+  set(d){ this.data = d; this.requestUpdate && this.requestUpdate(); }
+  updateAllViews(){ this.view.update(); }
+  paneViews(){ return [this.view]; }
+}
+class OverlayView {
+  constructor(src){ this.src = src; this.out = { bands:[], rects:[], now:null }; }
+  zOrder(){ return 'bottom'; }
+  update(){
+    const { chart, series, data } = this.src; if(!chart) return;
+    const ts = chart.timeScale(), half = (ts.options().barSpacing || 6) / 2;
+    const X = t => ts.timeToCoordinate(t), Y = v => series.priceToCoordinate(v);
+    this.out.bands = data.bands.map(b => ({ fill:b.fill, edge:b.edge, top:b.pts.map(p => [X(p.t), Y(p.hi)]), bot:b.pts.map(p => [X(p.t), Y(p.lo)]) }));
+    this.out.rects = data.rects.map(r => { const a = X(r.t0), b = X(r.t1); return a == null || b == null ? null : { ...r, x0:a - half, x1:b + half }; }).filter(Boolean);
+    this.out.boxes = (data.boxes || []).map(r => { const a = X(r.t0), b = X(r.t1), y0 = Y(r.hi), y1 = Y(r.lo);
+      return a == null || b == null || y0 == null || y1 == null ? null : { ...r, x0:a - half, x1:b + half, y0, y1 }; }).filter(Boolean);
+    this.out.boxes && this.out.boxes.forEach(b => b.ym = Y(b.mid));
+    this.out.now = data.now != null ? X(data.now) : null; this.out.nowColor = data.nowColor; this.out.half = half; this.out.topPad = data.topPad || 68; this.out.faded = !!data.faded;
+  }
+  renderer(){
+    const o = this.out;
+    return { draw(){}, drawBackground(target){
+      target.useBitmapCoordinateSpace(({ context:ctx, horizontalPixelRatio:hr, verticalPixelRatio:vr, bitmapSize }) => {
+        for(const r of o.rects){
+          ctx.globalAlpha = o.faded ? 0.4 : 1;
+          ctx.fillStyle = r.fill; ctx.fillRect(Math.round(r.x0*hr), 0, Math.max(1, Math.round((r.x1 - r.x0)*hr)), bitmapSize.height);
+          ctx.globalAlpha = 1;
+        }
+        for(const b of o.bands){
+          const top = b.top.filter(p => p[0] != null && p[1] != null), bot = b.bot.filter(p => p[0] != null && p[1] != null);
+          if(top.length < 2) continue;
+          ctx.beginPath(); ctx.moveTo(top[0][0]*hr, top[0][1]*vr);
+          top.forEach(p => ctx.lineTo(p[0]*hr, p[1]*vr)); [...bot].reverse().forEach(p => ctx.lineTo(p[0]*hr, p[1]*vr));
+          ctx.closePath(); ctx.fillStyle = b.fill; ctx.fill();
+          if(b.edge){
+            ctx.strokeStyle = b.edge; ctx.lineWidth = Math.max(1, hr);
+            for(const line of [top, bot]){ ctx.beginPath(); line.forEach((p, i) => i ? ctx.lineTo(p[0]*hr, p[1]*vr) : ctx.moveTo(p[0]*hr, p[1]*vr)); ctx.stroke(); }
+          }
+        }
+        // Buy / sell price zones: a box over the window's hour at the zone's price range, with the point price.
+        ctx.font = `600 ${10.5*vr}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+        for(const b of o.boxes || []){
+          const x = Math.round(b.x0*hr), w = Math.max(2, Math.round((b.x1 - b.x0)*hr)), y = Math.round(b.y0*vr), h = Math.max(3, Math.round((b.y1 - b.y0)*vr));
+          ctx.fillStyle = b.fill; ctx.fillRect(x, y, w, h);
+          ctx.strokeStyle = b.color; ctx.lineWidth = Math.max(1, hr); ctx.strokeRect(x + .5, y + .5, w - 1, h - 1);
+          const ym = Math.round(b.ym*vr); ctx.beginPath(); ctx.moveTo(x, ym); ctx.lineTo(x + w, ym); ctx.stroke();
+          ctx.fillStyle = b.color; ctx.textAlign = 'left'; ctx.textBaseline = b.isBuy ? 'top' : 'bottom';
+          ctx.fillText(b.label, x + w + 4*hr, b.isBuy ? y + h + 2*vr : y - 2*vr);
+        }
+        if(o.now != null){
+          ctx.strokeStyle = o.nowColor; ctx.lineWidth = Math.max(1, hr); ctx.setLineDash([4*hr, 4*hr]);
+          const x = Math.round((o.now + o.half)*hr) + .5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, bitmapSize.height); ctx.stroke(); ctx.setLineDash([]);
+        }
+        // Labels: sells along the top (below the legend), buys along the bottom; each label takes the
+        // first row where it doesn't collide with one already placed on that side.
+        ctx.font = `600 ${10.5*vr}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`; ctx.textBaseline = 'top'; ctx.textAlign = 'center';
+        const lh = 13*vr, boxH = lh*2 + 4*vr, rows = { top:[], bot:[] };
+        ctx.globalAlpha = o.faded ? 0.45 : 1;
+        for(const r of [...o.rects].sort((a,b) => (a.second - b.second) || (a.x0 - b.x0))){
+          const x = (r.x0 + r.x1)/2*hr, w = Math.max(...r.label.map(l => ctx.measureText(l).width)) + 8*hr;
+          const side = r.top ? rows.top : rows.bot;
+          let row = 0; while(row < 4 && (side[row] || []).some(([a, b]) => x - w/2 < b + 2*hr && a < x + w/2 + 2*hr)) row++;
+          (side[row] = side[row] || []).push([x - w/2, x + w/2]);
+          const y = r.top ? o.topPad*vr + row*(boxH + 3*vr) : bitmapSize.height - 6*vr - boxH - row*(boxH + 3*vr);
+          ctx.fillStyle = r.bg; ctx.fillRect(x - w/2, y, w, boxH);
+          ctx.strokeStyle = r.color; ctx.lineWidth = hr; ctx.strokeRect(x - w/2, y, w, boxH);
+          ctx.fillStyle = r.color; r.label.forEach((l, i) => ctx.fillText(l, x, y + 2*vr + i*lh));
+        }
+      });
+    }};
+  }
+}
+
+function chartColors(){
+  return { bg:css('--surface'), text:css('--muted'), grid:css('--grid'), border:css('--border'), up:css('--up'), down:css('--down'), proj:css('--proj'), trend:css('--trend') };
+}
+function ensureChart(){
+  if(S.chart) return;
+  const c = chartColors();
+  S.chart = LW.createChart($('fc'), {
+    autoSize:true,
+    layout:{ background:{ type:'solid', color:c.bg }, textColor:c.text, fontSize:12, attributionLogo:true },
+    grid:{ vertLines:{ color:c.grid }, horzLines:{ color:c.grid } },
+    rightPriceScale:{ borderColor:c.border, scaleMargins:{ top:0.2, bottom:0.16 } },
+    timeScale:{ borderColor:c.border, timeVisible:true, secondsVisible:false, rightOffset:4, barSpacing:7 },
+    crosshair:{ mode: LW.CrosshairMode.Normal },
+    localization:{ priceFormatter: v => prefs.unit === 'pct' ? (v >= 0 ? '+' : '') + v.toFixed(2) + '%' : v.toFixed(2) }
+  });
+  S.series.candle = S.chart.addSeries(LW.CandlestickSeries, { upColor:c.up, downColor:c.down, wickUpColor:c.up, wickDownColor:c.down, borderVisible:false });
+  S.series.trend = S.chart.addSeries(LW.LineSeries, { color:c.trend, lineWidth:1, lineStyle:LW.LineStyle.Dotted, priceLineVisible:false, lastValueVisible:false, crosshairMarkerVisible:false });
+  S.series.proj = S.chart.addSeries(LW.LineSeries, { color:c.proj, lineWidth:2, lineStyle:LW.LineStyle.Dashed, priceLineVisible:false, lastValueVisible:false,
+    // Fit the price axis to the visible part of the cone (its band is drawn by the overlay, not a series).
+    autoscaleInfoProvider: orig => {
+      const r = orig(), vr = S.chart && S.chart.timeScale().getVisibleRange();
+      if(!vr || !S.maps.proj || !S.view) return r;
+      let lo = Infinity, hi = -Infinity;
+      for(const p of S.maps.proj.values()) if(p.t >= vr.from && p.t <= vr.to){ lo = Math.min(lo, S.view(p.q1)); hi = Math.max(hi, S.view(p.q3)); }
+      if(!isFinite(lo)) return r;
+      const pr = r && r.priceRange ? r.priceRange : { minValue:lo, maxValue:hi };
+      return { priceRange:{ minValue:Math.min(pr.minValue, lo), maxValue:Math.max(pr.maxValue, hi) } };
+    } });
+  // Prediction log (forecast made 24 h ago): solid purple over the past day, joined to the dashed forecast at "now".
+  S.series.log = S.chart.addSeries(LW.LineSeries, { color:c.proj, lineWidth:3, priceLineVisible:false, lastValueVisible:false, crosshairMarkerVisible:false });
+  S.overlay = new Overlay(); S.series.candle.attachPrimitive(S.overlay);   // on the candle series so bands draw even when the cone series is empty
+  let deb = null;
+  S.chart.timeScale().subscribeVisibleTimeRangeChange(r => {
+    if(S.rebuilding || prefs.bar !== 'auto' || !r) return;
+    clearTimeout(deb);
+    deb = setTimeout(() => { const B = autoBar(r.to - r.from); if(B !== S.barMin) draw(true); }, 180);
+  });
+  S.chart.subscribeCrosshairMove(p => renderLegend(p && p.time));
+}
+function themeChart(){
+  if(!S.chart) return;
+  const c = chartColors();
+  S.chart.applyOptions({ layout:{ background:{ type:'solid', color:c.bg }, textColor:c.text }, grid:{ vertLines:{ color:c.grid }, horzLines:{ color:c.grid } },
+    rightPriceScale:{ borderColor:c.border }, timeScale:{ borderColor:c.border } });
+  S.series.candle.applyOptions({ upColor:c.up, downColor:c.down, wickUpColor:c.up, wickDownColor:c.down });
+  S.series.trend.applyOptions({ color:c.trend }); S.series.proj.applyOptions({ color:c.proj }); S.series.log.applyOptions({ color:c.proj });
+}
+
+// Draw everything at the current bar size; keepView restores the visible time range.
+function draw(keepView){
+  ensureChart();
+  const F = S.fc, ts = S.chart.timeScale(), range = keepView ? ts.getVisibleRange() : null;
+  if(prefs.bar === 'auto') S.barMin = range ? autoBar(range.to - range.from) : (S.barMin || 60);
+  else S.barMin = +prefs.bar;
+  const B = S.barMin, P = F ? F.latest.price : (latest() || {}).price;
+  const tv = v => prefs.unit === 'pct' && P ? (v/P - 1)*100 : v;
+  S.view = tv;
+  S.rebuilding = true;
+  const candles = candlesFor(B).map(x => ({ time:x.time, open:tv(x.open), high:tv(x.high), low:tv(x.low), close:tv(x.close) }));
+  S.series.candle.setData(candles);
+  S.maps.candle = new Map(candlesFor(B).map(x => [x.time, x]));
+  const adv = true;                                          // the daily-pattern overlay (projection, bands, windows)
+  const proj = F ? projFor(B, F.pts) : [];
+  // Prediction log (S.logs: 5 trading-day segments, each forecast 24 trading hours earlier), then today's forecast.
+  const lastT = candles.length ? candles[candles.length-1].time : 0;
+  const logMap = new Map();
+  for(const g of S.logs || []){
+    const from = wallSec(g.origin), to = wallSec(g.end);
+    projFor(B, g.f.pts.filter(p => p.t >= from && p.t < to)).forEach(p => logMap.set(p.t, { ...p, origin:g.origin }));
+  }
+  const logPts = [...logMap.values()].filter(p => p.t <= lastT && (!proj.length || p.t < proj[0].t)).sort((a,b) => a.t - b.t);
+  S.maps.log = new Map(logPts.map(p => [p.t, p]));
+  S.maps.proj = new Map(proj.map(p => [p.t, p]));
+  S.series.proj.setData(proj.map(p => ({ time:p.t, value:tv(p.price) })));
+  // The log line ends on today's first forecast point so the two parts join into one continuous line.
+  const logLine = logPts.map(p => ({ time:p.t, value:tv(p.price) }));
+  if(logLine.length && proj.length) logLine.push({ time:proj[0].t, value:tv(proj[0].price) });
+  S.series.log.setData(logLine);
+  // Trend: recent daily medians (noon), continued through the projected days.
+  const tr = new Map();
+  if(F && adv){
+    F.recent.forEach(d => tr.set(bucket(dayEpoch(d.date) + 12*3600, B), tv(d.med)));
+    const byDate = new Map(); F.pts.forEach(p => { if(!byDate.has(p.date)) byDate.set(p.date, p); });
+    byDate.forEach(p => tr.set(bucket(Math.max(p.t, dayEpoch(p.date) + 12*3600), B), tv(F.anchor + F.slope*p.k)));
+  }
+  S.series.trend.setData([...tr].sort((a,b) => a[0] - b[0]).map(([time, value]) => ({ time, value })));
+  // Overlay
+  const bands = [];
+  if(proj.length){                                          // bands for the future part only
+    if(prefs.showRange) bands.push({ fill:css('--band-range'), pts:proj.map(p => ({ t:p.t, hi:tv(p.max), lo:tv(p.min) })) });
+    bands.push({ fill:css('--band-iqr'), edge:css('--band-edge'), pts:proj.map(p => ({ t:p.t, hi:tv(p.q3), lo:tv(p.q1) })) });
+  }
+  const rects = [];
+  if(F && adv){
+    const bg = css('--surface');
+    F.perDay.forEach(d => {
+      [['buy1','BEST BUY','--buy','--buy-best',false,false],['buy2','2ND BUY','--buy','--buy-2nd',false,true],
+       ['sell1','BEST SELL','--sell','--sell-best',true,false],['sell2','2ND SELL','--sell','--sell-2nd',true,true]].forEach(([k, name, col, fill, top, second]) => {
+        const w = d[k]; if(!w) return;
+        rects.push({ t0:bucket(w.t0, B), t1:bucket(w.t1 - 300, B), fill:css(fill), color:css(col), bg, top, second,
+          label:[`${name} · ${DOW[dow(w.date)]}`, `${hhmm(w.t0)}–${hhmm(w.t1)}`] });
+      });
+    });
+  }
+  // Buy / sell zones for each projected day's best windows.
+  const boxes = [];
+  if(F){
+    for(const d of F.perDay){
+      if(d.buy1 && d.buy1.bp != null) boxes.push({ t0:bucket(d.buy1.t0, B), t1:bucket(d.buy1.t1 - 300, B), lo:tv(d.buy1.bz[0]), hi:tv(d.buy1.bz[1]), mid:tv(d.buy1.bp),
+        fill:css('--buy-best'), color:css('--buy'), isBuy:true, label:`Buy ≈ ${usd(d.buy1.bp)}` });
+      if(d.sell1 && d.sell1.sp != null) boxes.push({ t0:bucket(d.sell1.t0, B), t1:bucket(d.sell1.t1 - 300, B), lo:tv(d.sell1.sz[0]), hi:tv(d.sell1.sz[1]), mid:tv(d.sell1.sp),
+        fill:css('--sell-best'), color:css('--sell'), isBuy:false, label:`Sell ≈ ${usd(d.sell1.sp)}` });
+    }
+  }
+  // Open trade: buy, target and cut-loss prices as labelled price lines.
+  (S.tradeLines || []).forEach(l => S.series.candle.removePriceLine(l)); S.tradeLines = [];
+  if(S.pos){
+    const p = S.pos, add = (price, color, title, style) => S.tradeLines.push(S.series.candle.createPriceLine({ price:tv(price), color, lineWidth:1, lineStyle:style, axisLabelVisible:true, title }));
+    add(p.price, css('--muted'), 'Buy', LW.LineStyle.Solid);
+    p.targets.forEach(t => add(levelPrice(p, t), css('--up'), `T +${t}%`, LW.LineStyle.Dashed));
+    add(levelPrice(p, -p.cut), css('--down'), `Cut −${p.cut}%`, LW.LineStyle.Dashed);
+  } else {
+    // No trade open: the suggested buy and sell prices as labelled lines.
+    const BP = bestPrices(), add = (price, color, title) => S.tradeLines.push(S.series.candle.createPriceLine({ price:tv(price), color, lineWidth:1, lineStyle:LW.LineStyle.Dashed, axisLabelVisible:true, title }));
+    if(BP && BP.buy && BP.buy.bp != null) add(BP.buy.bp, css('--buy'), 'Buy ≈');
+    if(BP && BP.sell && BP.sell.sp != null) add(BP.sell.sp, css('--sell'), 'Sell ≈');
+  }
+  const lastC = candles.length ? candles[candles.length-1].time : null;
+  renderLegend(null);
+  S.overlay.set({ bands, rects, boxes, now:lastC, nowColor:css('--muted'), topPad: $('legend').offsetHeight + 14, faded: adv && !!(S.verdict && S.verdict.level === 'red') });   // sell labels start below the legend
+  if(range) ts.setVisibleRange(range);
+  else if(lastC){ const end = proj.length ? proj[proj.length-1].t : lastC; ts.setVisibleRange({ from: logPts.length ? logPts[0].t - 2*3600 : lastC - 26*3600, to:end }); }   // whole log + forecast
+  setTimeout(() => { S.rebuilding = false; }, 50);
+  renderLegend(null);
+  document.querySelectorAll('#barSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === String(prefs.bar)));
+  const autoBtn = $('barSeg').querySelector('[data-v=auto]');
+  autoBtn.textContent = prefs.bar === 'auto' ? `Auto (${barName(B)})` : 'Auto';
+}
+const pc = x => Math.round(x*100) + '%';
+function windowObjAt(t){
+  const F = S.fc; if(!F) return null;
+  for(const d of F.perDay) for(const [k, isBuy] of [['buy1', true], ['buy2', true], ['sell1', false], ['sell2', false]])
+    if(d[k] && t >= d[k].t0 && t < d[k].t1) return { w:d[k], isBuy };
+  return null;
+}
+function windowAt(t){
+  const F = S.fc; if(!F) return '';
+  for(const d of F.perDay) for(const [k, n] of [['buy1','Best buy'],['buy2','2nd buy'],['sell1','Best sell'],['sell2','2nd sell']])
+    if(d[k] && t >= d[k].t0 && t < d[k].t1) return n;
+  return '';
+}
+function renderLegend(time){
+  const el = $('legend'); if(!S.maps.candle) { el.innerHTML = ''; return; }
+  let t = time;
+  if(t == null){ const keys = [...S.maps.candle.keys()]; t = keys[keys.length-1]; }
+  const c = S.maps.candle.get(t), p = S.maps.proj && S.maps.proj.get(t), B = S.barMin;
+  const size = barName(B);
+  let h = `<span class="m">XAU/USD · ${size} · ${t ? tLabel(t) : ''}</span>`;
+  if(c){
+    const ch = (c.close/c.open - 1)*100;
+    h += `<br>O ${c.open.toFixed(2)}  H ${c.high.toFixed(2)}  L ${c.low.toFixed(2)}  C <b class="${ch >= 0 ? 'up' : 'down'}">${c.close.toFixed(2)}</b> <span class="${ch >= 0 ? 'up' : 'down'}">${pct(ch)}</span>`;
+  }
+  const lg = S.maps.log && S.maps.log.get(t);
+  if(lg){
+    const act = c ? c.close : null, gap = act ? (lg.price/act - 1)*100 : null;
+    h += `<br><span style="color:var(--proj)">Predicted at ${tLabel(wallSec(lg.origin))} ${usd(lg.price)}</span>` + (act ? ` <span class="m">· actual close ${usd(act)} (gap ${pct(gap)})</span>` : '');
+  }
+  if(p){
+    const w = windowAt(t);
+    h += `<br><span style="color:var(--proj)">Projected ${usd(p.price)}</span> <span class="m">IQR ${usd(p.q1)} – ${usd(p.q3)}${prefs.showRange ? ` · Min–max ${usd(p.min)} – ${usd(p.max)}` : ''}</span>` + (w ? ` · <b class="${w.includes('buy') ? 'buy' : 'sell'}">${w} window</b>` : '');
+    const W = windowObjAt(t);
+    if(W) h += `<br><b class="${W.isBuy ? 'buy' : 'sell'}">${W.isBuy ? `Buy ≈ ${usd(W.w.bp)} · zone ${usd(W.w.bz[0])} – ${usd(W.w.bz[1])}` : `Sell ≈ ${usd(W.w.sp)} · zone ${usd(W.w.sz[0])} – ${usd(W.w.sz[1])}`}</b>`;
+  }
+  el.innerHTML = h;
+}
+
+// ---------- panels ----------
+function card(cls, k, v, s){ return `<div class="card ${cls||''}"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s||'&nbsp;'}</div></div>`; }
+function dayName(date){ const t = thai().date; return date === t ? 'Today' : date === addDays(t, 1) ? 'Tomorrow' : DOW[dow(date)]; }
+const REF_NAME = { 7:'1 week', 14:'2 weeks', 30:'1 month', 91:'3 months', 182:'6 months' };
+function luckText(p, k, n){
+  if(k < n/2) return binomTail(n - k, n) < P_GREEN ? '<b class="down">worse than a coin flip</b> (the opposite happened more often)' : 'no better than a coin flip';
+  const v = Math.round(p*100) + '%';
+  return p < P_GREEN ? `unlikely to be luck (${v})` : p < P_AMBER ? `could still be luck (${v})` : `easily happens by luck (${v})`;
+}
+function dots(list, key, good){
+  return '<span class="dots">' + list.map(d => {
+    const hit = d[key], tip = `${d.date} · buy ${d.buyW} (${pct(d.buyPct)} vs day median) · sell ${d.sellW} (${pct(d.sellPct)})`;
+    return `<i class="${hit ? 'hit' : 'miss'}" style="${hit ? `background:${good}` : ''}" title="${tip}"></i>`;
+  }).join('') + '</span>';
+}
+function reliabilityCard(F, V){
+  const bt = F.bt;
+  const seg = `<div class="grp"><span class="lbl">Test over</span><div class="seg" id="btSeg">` +
+    [10, 20, 40, 60].map(n => `<button data-v="${n}" aria-pressed="${n === prefs.btDays}">${n} days</button>`).join('') + '</div></div>';
+  return `<div class="card rel lvl-${V.level}"><div class="k">Can I trust the buy/sell times?</div><div class="v">${V.icon} ${V.title}</div>` +
+    `<div class="relnums">${bt ? `Buy <b>${bt.buyHit}%</b> · Sell <b>${bt.sellHit}%</b> · <span class="s">${bt.n} test days</span>` : '<span class="s">Not enough history yet</span>'}</div>${seg}</div>`;
+}
+// "Yesterday's forecast vs actual": compares the 24-hour prediction log with the real 5-minute closes.
+function logCard(){
+  const L5 = S.logs || [], Lb = latest(); if(!L5.length || !Lb) return '';
+  const closeAt = t => { const date = new Date(t*1000).toISOString().slice(0,10), d = S.days.get(date); return d ? d.c[(t - dayEpoch(date))/300] : null; };
+  let sumPct = 0, sumUsd = 0, n = 0, dirOk = 0, dirN = 0, bOk = 0, bN = 0, sOk = 0, sN = 0;
+  const dayGaps = [];
+  for(const g of L5){
+    const from = wallSec(g.origin), to = Math.min(wallSec(g.end), Lb.t + 300), o = g.f.latest.price;
+    let gs = 0, gn = 0, lastPred = null, lastAct = null;
+    for(const p of g.f.pts){
+      if(p.t < from || p.t >= to) continue;
+      const c = closeAt(p.t); if(c == null) continue;
+      const e = Math.abs(p.price/c - 1)*100; gs += e; sumPct += e; sumUsd += Math.abs(p.price - c); gn++; n++; lastPred = p.price; lastAct = c;
+    }
+    if(gn){ dayGaps.push(gs/gn); dirN++; if((lastPred >= o) === (lastAct >= o)) dirOk++; }
+    // Did that forecast's best buy / best sell hour (inside its own 24 h) turn out cheap / expensive?
+    for(const d of g.f.perDay) for(const [k, isBuy] of [['buy1', true], ['sell1', false]]){
+      const w = d[k]; if(!w || w.t0 < from || w.t1 > to) continue;
+      const v = []; for(let t = w.t0; t < w.t1; t += 300){ const c = closeAt(t); if(c != null) v.push(c); }
+      const day = S.days.get(w.date); if(!v.length || !day) continue;
+      const ok = isBuy ? mean(v) < day.med : mean(v) > day.med;
+      if(isBuy){ bN++; if(ok) bOk++; } else { sN++; if(ok) sOk++; }
+    }
+  }
+  if(n < 12) return '';
+  const gap = sumPct/n, read = gap < 0.3 ? ['✓', 'Close', 'up'] : gap < 0.7 ? ['~', 'Rough', ''] : ['✗', 'Missed', 'down'];
+  return card('', `Prediction log vs actual (last ${dayGaps.length} trading days)`, `<span class="${read[2]}">${read[0]} ${read[1]}</span> — average gap ${gap.toFixed(2)}% (${usd(sumUsd/n)})`,
+    `Direction right ${dirOk}/${dirN} days` + (bN ? ` · best buy hour ✓ ${bOk}/${bN}` : '') + (sN ? ` · best sell hour ✓ ${sOk}/${sN}` : '') +
+    ` · daily gap ${dayGaps.map(x => x.toFixed(2)).join(' · ')}%`);
+}
+function renderPanels(){
+  const F = S.fc;
+  if(!F){ $('cards').innerHTML = ''; $('dayCards').innerHTML = ''; S.verdict = null; return; }
+  const V = S.verdict = verdict(F.bt);
+  const T = F.trip;
+  const when = w => `${dayName(w.date)} ${hhmm(w.t0)}–${hhmm(w.t1)}`;
+  const tag = { green:'<span class="tag green">Reliable</span>', amber:'<span class="tag amber">Weak</span>', red:'<span class="tag red">Not reliable now</span>', none:'' }[V.level];
+  const plan = T && T.gain > 0
+    ? card(`plan ${V.level === 'red' ? 'faded' : ''}`, `Suggested plan (next 48 h) ${tag}`,
+        `Buy <span class="buy">${when(T.buy)}</span> at ≈ <b class="buy">${usd(T.buy.bp)}</b> → Sell <span class="sell">${when(T.sell)}</span> at ≈ <b class="sell">${usd(T.sell.sp)}</b>`,
+        `buy zone ${usd(T.buy.bz[0])}–${usd(T.buy.bz[1])} · sell zone ${usd(T.sell.sz[0])}–${usd(T.sell.sz[1])} · typical gain ${pct(T.gain)}` +
+        ` · if both orders fill at the points: ${pct((T.sell.sp/T.buy.bp - 1)*100)}` + (V.level === 'red' ? ' · low reliability: treat as a guess' : ''))
+    : card('plan', `Suggested plan (next 48 h) ${tag}`, 'No profitable buy → sell pair projected', 'the typical pattern does not rise after any buy window in the horizon');
+  const trendPct = F.slope / F.anchor * 100;
+  const hint = trendPct > 0.05 ? 'Trend up: buying dips is safer than selling early.' : trendPct < -0.05 ? 'Trend down: selling rallies is safer than buying early.' : 'Flat trend: prices move sideways, so the daily rhythm matters more.';
+  $('cards').innerHTML = plan +
+    card('', 'Trend (damped)', `<span class="${trendPct >= 0 ? 'up' : 'down'}">${pct(trendPct, 2)}/day ${trendPct > 0.02 ? '↑' : trendPct < -0.02 ? '↓' : '→'}</span>`,
+      `${hint} Based on ${F.refN} days (${REF_NAME[prefs.ref]}${prefs.weekday ? (F.fallback ? ', too few same-weekday days: all days used' : ', same weekday') : ''}).`) +
+    logCard() + reliabilityCard(F, V);
+  $('dayCards').classList.toggle('faded', V.level === 'red');
+  $('dayCards').innerHTML = F.perDay.map(d => {
+    const cell = (k, name, cls) => {
+      const w = d[k], isBuy = cls === 'buy';
+      const pt = w && (isBuy ? w.bp : w.sp), z = w && (isBuy ? w.bz : w.sz);
+      return `<div><div class="t ${cls}">${name}</div><div class="w">${w ? `${hhmm(w.t0)}–${hhmm(w.t1)}` : '—'}</div>` +
+        (w && pt != null ? `<div class="pt ${cls}">${isBuy ? 'Buy' : 'Sell'} ≈ <b>${usd(pt)}</b></div><div class="p">zone ${usd(z[0])} – ${usd(z[1])}</div>` : '') + `</div>`;
+    };
+    return `<div class="card"><div class="k">${dayName(d.date)} · ${DOW[dow(d.date)]} ${d.date.slice(8,10)}/${d.date.slice(5,7)}${V.level === 'red' ? ' · <span class="down">low reliability</span>' : ''}</div><div class="wins">` +
+      cell('buy1', 'Best buy', 'buy') + cell('buy2', '2nd buy', 'buy') + cell('sell1', 'Best sell', 'sell') + cell('sell2', '2nd sell', 'sell') + '</div></div>';
+  }).join('');
+}
+// Last close of the most recent day before `date` (for the header's daily change).
+function prevClose(date){
+  const prev = [...S.days.values()].filter(d => d.date < date && d.c.some(v => v != null)).sort((a,b) => a.date < b.date ? -1 : 1).pop();
+  if(!prev) return null;
+  for(let i = SLOTS-1; i >= 0; i--) if(prev.c[i] != null) return prev.c[i];
+  return null;
+}
+function renderHeader(){
+  const L = latest();
+  $('pollSel').value = prefs.poll;
+  if(!S.key){
+    $('dot').classList.remove('on'); $('badge').textContent = 'Price';
+    $('pv').textContent = '—'; $('pd').innerHTML = '<a href="#" id="addKeyLink">Add Twelve Data key</a>';
+    $('addKeyLink').onclick = e => { e.preventDefault(); setTab('fc'); $('keyin').focus(); };
+    return;
+  }
+  const live = S.status === 'ok' && wantLive();
+  $('dot').classList.toggle('on', live);
+  $('badge').textContent = !wantLive() ? 'Paused' : ({ ok:'Live', closed:'Market closed', budget:'Paused · budget', stopped:'Stopped', error:'Refresh failed', idle:'Updating' })[S.status] || 'Live';
+  if(!L){ $('pv').textContent = '—'; $('pd').textContent = 'loading price…'; return; }
+  const pc = prevClose(L.date), ch = pc ? (L.price/pc - 1)*100 : null;
+  $('pv').innerHTML = usd(L.price) + (ch != null ? ` <span class="${ch >= 0 ? 'up' : 'down'}" style="font-size:14px">${pct(ch)}</span>` : '');
+  $('pd').textContent = `last bar ${L.date.slice(5)} ${hm(L.s)} Thai` + (S.nextAt ? ` · next ${thai(S.nextAt).time}` : '') + (ch != null ? ' · vs prev. close' : '');
+  // Best buy / sell price for the plan's windows (or the next best windows), compared with the live price.
+  const P = bestPrices();
+  $('pbs').innerHTML = P ? [
+    P.buy ? `<span class="buy">Best buy <b>${usd(P.buy.bp)}</b> (${usd(P.buy.bz[0])}–${usd(P.buy.bz[1])}, ${pct((P.buy.bp/L.price - 1)*100)} · ${dayName(P.buy.date)} ${hhmm(P.buy.t0)})</span>` : '',
+    P.sell ? `<span class="sell">Best sell <b>${usd(P.sell.sp)}</b> (${usd(P.sell.sz[0])}–${usd(P.sell.sz[1])}, ${pct((P.sell.sp/L.price - 1)*100)} · ${dayName(P.sell.date)} ${hhmm(P.sell.t0)})</span>` : ''
+  ].filter(Boolean).join(' · ') : '';
+}
+function bestPrices(){
+  const F = S.fc; if(!F) return null;
+  if(F.trip && F.trip.gain > 0) return { buy:F.trip.buy, sell:F.trip.sell };
+  const d = F.perDay.find(x => x.buy1 || x.sell1); return d ? { buy:d.buy1, sell:d.sell1 } : null;
+}
+function renderInfo(){
+  const ds = [...S.days.keys()].sort(), n = completeDays().length;
+  $('storeInfo').textContent = S.syncing ? `Downloading 5-minute history… (call ${S.syncCalls})` :
+    ds.length ? `Stored: ${ds[0]} → ${ds[ds.length-1]} · ${n} complete trading days` + (S.meta.limitReached ? ' · no older data available' : '') : 'No history stored yet';
+  renderQuota();
+}
+function setEmpty(m){ const e = $('empty'); e.textContent = m || ''; e.style.display = m ? 'flex' : 'none'; }
+
+// Recompute the forecast and redraw (only while the forecast tab is visible).
+function refresh(){
+  if(S.key && S.days.size) S.fc = forecast();
+  renderInfo(); renderHeader();
+  $('keybox').classList.toggle('hide', !!S.key || prefs.tab === 'tv');
+  $('footer').classList.toggle('hide', prefs.tab === 'tv');
+  if(prefs.tab === 'trk' && S.key) S.odds = computeOdds();           // Trade Tracker's "chance before cut-loss" column
+  if(prefs.tab === 'trk') renderTracker();
+  if(prefs.tab !== 'fc') return;
+  if(!S.key){ setEmpty('Add your Twelve Data API key above to load the forecast.'); return; }
+  // Prediction log: the last 5 trading days, each segment predicted by the same method 24 trading hours before it began.
+  const Lb = latest(); S.logs = [];
+  if(S.fc && Lb){
+    let segEnd = (Lb.t - 7*3600)*1000 + 300e3;                // close of the latest 5-min bar
+    for(let k = 0; k < 5; k++){
+      const origin = tradingShift(segEnd, -24), f = forecast({ originMs:origin, noBacktest:true });
+      if(f) S.logs.unshift({ origin, end:segEnd, f });
+      segEnd = origin;
+    }
+  }
+  if(!S.days.size){ setEmpty(S.syncing ? 'Downloading 5-minute history…' : 'No data yet.'); renderPanels(); return; }
+  setEmpty(S.fc ? '' : (S.syncing ? 'Downloading 5-minute history… the forecast appears when at least 5 trading days are stored.' : 'Not enough history for a forecast yet (need ≥ 5 complete trading days).'));
+  renderPanels(); draw(!!(S.chart && S.chart.timeScale().getVisibleRange()) && S.drawn);
+  S.drawn = true;
+}
+
+// ---------- Trade Tracker ----------
+const gain = (p, x) => (x / p.price - 1) * 100 - p.cost;                 // net % after cost/spread
+const levelPrice = (p, netPct) => p.price * (1 + (netPct + p.cost) / 100);
+const savePos = () => S.pos ? store.set(K.pos, JSON.stringify(S.pos)) : store.del(K.pos);
+function trackPosition(bars){
+  const p = S.pos; if(!p || !bars.length) return;
+  const startMs = thaiMs(p.time);
+  for(const b of bars){
+    const bMs = thaiMs(b.dt); if(bMs + 300e3 <= startMs) continue;
+    const before = bMs <= startMs;                   // bar already forming at the purchase time: only its close counts
+    const hi = before ? b.c : (b.h ?? b.c), lo = before ? b.c : (b.l ?? b.c);
+    if(hi > p.peak){ p.peak = hi; p.peakAt = b.dt; }
+    if(lo < p.trough){ p.trough = lo; p.troughAt = b.dt; }
+  }
+  evaluatePos(); savePos();
+  if(prefs.tab === 'trk') renderTracker();
+}
+// Bars already stored since the buy time (used when a trade is entered with an earlier time).
+function storedBarsSince(dt){
+  const out = [], from = dt.slice(0,10);
+  [...S.days.values()].filter(d => d.date >= from).sort((a,b) => a.date < b.date ? -1 : 1).forEach(d => d.c.forEach((c, s) => {
+    if(c != null) out.push({ dt:`${d.date} ${hm(s)}:00`, h:d.h[s], l:d.l[s], c });
+  }));
+  return out;
+}
+function evaluatePos(){
+  const p = S.pos; if(!p) return;
+  const now = latest(), cur = now ? now.price : p.price, stamp = thai().time;
+  p.targets.forEach((t, i) => {
+    const k = 't' + i;
+    if(!p.fired[k] && gain(p, p.peak) >= t){
+      p.fired[k] = stamp;
+      alertUser('tp', `Gold +${t}% reached`, `High ${usd(p.peak)} (target ${usd(levelPrice(p, t))}, bought ${usd(p.price)}). Now ${usd(cur)} (${pct(gain(p, cur))} net).`);
+    }
+  });
+  if(!p.fired.cut && gain(p, p.trough) <= -p.cut){
+    p.fired.cut = stamp;
+    alertUser('sl', `Gold cut-loss −${p.cut}% hit`, `Low ${usd(p.trough)} (cut-loss ${usd(levelPrice(p, -p.cut))}, bought ${usd(p.price)}). Now ${usd(cur)} (${pct(gain(p, cur))} net).`);
+  }
+}
+let audio = null;
+function primeAudio(){ try{ audio = audio || new (window.AudioContext || window.webkitAudioContext)(); if(audio.state === 'suspended') audio.resume(); }catch(e){} }
+function beep(kind){
+  if(!audio) return;
+  (kind === 'tp' ? [880, 1175] : [330, 220]).forEach((f, i) => {
+    const o = audio.createOscillator(), g = audio.createGain(), t0 = audio.currentTime + i*0.22;
+    o.frequency.value = f; o.connect(g); g.connect(audio.destination);
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+    o.start(t0); o.stop(t0 + 0.21);
+  });
+}
+function alertUser(kind, title, body){
+  const box = $('alerts'), el = document.createElement('div');
+  el.className = 'alert ' + kind;
+  el.innerHTML = '<div><b class="ttl"></b> <span class="s when"></span><div class="body"></div></div><button class="x" aria-label="Dismiss">×</button>';
+  el.querySelector('.ttl').textContent = title;
+  el.querySelector('.when').textContent = thai().time + ' Thai';
+  el.querySelector('.body').textContent = body;
+  el.querySelector('.x').onclick = () => el.remove();
+  box.prepend(el); while(box.children.length > 5) box.lastChild.remove();
+  if(S.pos){ S.pos.log.unshift(`${thai().dt.slice(5,16)} · ${title}`); S.pos.log = S.pos.log.slice(0, 10); }
+  beep(kind);
+  try{ if('Notification' in window && Notification.permission === 'granted') new Notification('Gold Trade Tracker · ' + title, { body, tag: title }); }catch(e){}
+}
+function renderTracker(){
+  const p = S.pos, L = latest();
+  $('trkForm').classList.toggle('hide', !!p);
+  $('trkStatus').classList.toggle('hide', !p);
+  if(document.activeElement !== $('lineUrl')) $('lineUrl').value = S.line.url;
+  if(document.activeElement !== $('lineSecret')) $('lineSecret').value = S.line.secret;
+  const nb = $('notifBtn');
+  if(!('Notification' in window)) nb.classList.add('hide');
+  else if(Notification.permission === 'granted'){ nb.textContent = 'Desktop alerts on'; nb.disabled = true; }
+  else if(Notification.permission === 'denied'){ nb.textContent = 'Desktop alerts blocked by the browser'; nb.disabled = true; }
+  if(!p){
+    const pi = $('pPrice'), ti = $('pTime');
+    if(!pi.dataset.dirty && L) pi.value = L.price.toFixed(2);
+    if(!ti.dataset.dirty) ti.value = thai().dt.slice(0,16).replace(' ', 'T');
+    [['pT1','t1'],['pT2','t2'],['pT3','t3'],['pCut','cut'],['pCost','cost']].forEach(([id, k]) => { if(!$(id).dataset.dirty) $(id).value = prefs[k]; });
+    renderPreview();
+    return;
+  }
+  const cur = L ? L.price : p.price, g = gain(p, cur);
+  $('tPL').innerHTML = `<span class="${g >= 0 ? 'up' : 'down'}">${pct(g)}</span> <span class="s">net · ${usd(cur - p.price)}/oz · now ${usd(cur)}</span>`;
+  $('tInfo').textContent = `Bought ${usd(p.price)} at ${p.time.slice(0,16)} Thai` + (p.cost ? ` · cost ${p.cost}%` : '') +
+    ` · best since ${usd(p.peak)} (${pct(gain(p, p.peak))}) · worst ${usd(p.trough)} (${pct(gain(p, p.trough))})`;
+  const O = S.odds && S.odds.mode === 'trade' && S.odds.rows ? S.odds : null;
+  const chance = i => { const r = O && O.rows.find(x => x.i === i); return r ? `<b class="${r.pWin >= r.pLoss ? 'up' : 'down'}">${pc(r.pWin)}</b>` : '—'; };
+  const row = (name, netPct, hit, color, frac, idx) => {
+    const lv = levelPrice(p, netPct), dist = (lv / cur - 1) * 100;
+    return `<tr><td style="color:${color};font-weight:650;white-space:nowrap">${name}</td><td class="tp" style="color:${color}">${usd(lv)}</td>` +
+      `<td>${hit ? '—' : `${pct(dist)} (${lv >= cur ? '+' : '−'}${usd(Math.abs(lv - cur))})`}</td>` +
+      `<td>${idx == null || hit ? '' : chance(idx)}</td>` +
+      `<td>${hit ? `<b style="color:${color}">✓ reached ${hit}</b>` : `<div class="track"><div class="fill" style="width:${Math.max(0, Math.min(100, frac*100)).toFixed(0)}%;background:${color}"></div></div>`}</td></tr>`;
+  };
+  const up = css('--up'), down = css('--down');
+  $('tLevels').innerHTML = '<table class="ltable"><thead><tr><th>Level</th><th>Target price</th><th>Distance from now</th><th title="Chance of reaching this target before the cut-loss within 48 h, from similar past moments">Chance before cut-loss</th><th>Status</th></tr></thead><tbody>' +
+    p.targets.map((t, i) => row(`Target +${t}%`, t, p.fired['t' + i], up, g / t, i)).join('') +
+    row(`Cut-loss −${p.cut}%`, -p.cut, p.fired.cut, down, -g / p.cut, null) +
+    `<tr><td class="m" style="color:var(--muted)">Buy</td><td class="tp">${usd(p.price)}</td><td>${pct((p.price/cur - 1)*100)}</td><td></td><td class="m" style="color:var(--muted)">${p.time.slice(5,16)}</td></tr></tbody></table>`;
+  $('tLog').innerHTML = p.log.length ? 'Alerts: ' + p.log.map(x => x.replace(/</g, '&lt;')).join(' · ') : 'No alerts yet.';
+}
+
+// ---------- Usage & free limits ----------
+function usageRow(label, used, limit, text){
+  const f = limit ? used / limit : 0, color = f < 0.6 ? css('--up') : f < 0.85 ? '#d97706' : css('--down');
+  return `<div class="lvl"><span class="name">${label}</span><div class="track"><div class="fill" style="width:${Math.min(100, f*100).toFixed(1)}%;background:${color}"></div></div><span class="d">${text}</span></div>`;
+}
+async function loadUsage(){
+  const body = $('usageBody'); body.textContent = 'Loading…';
+  let tw = null, rl = null; const errs = [];
+  if(S.key){
+    try{
+      const r = await fetch(`${API}/api_usage?apikey=${encodeURIComponent(S.key)}`), j = await r.json();
+      if(j.status === 'error') throw new Error(j.message);
+      tw = { today:j.daily_usage, dailyLimit:j.plan_daily_limit, thisMinute:j.current_usage, minuteLimit:j.plan_limit };
+    }catch(e){ errs.push('Twelve Data: ' + e.message); }
+  }
+  if(S.line.url){
+    try{ rl = (await relay('usage')).usage; if(!tw && rl.twelve && !rl.twelve.error) tw = rl.twelve; }
+    catch(e){ errs.push('LINE relay: ' + e.message); }
+  }
+  const n = v => (v ?? 0).toLocaleString('en-US');
+  let h = '<b>Twelve Data</b> <span class="s">(whole account: page + Google script)</span>';
+  if(tw){
+    h += usageRow('Calls today', tw.today, tw.dailyLimit, `${n(tw.today)} / ${n(tw.dailyLimit)} · resets 07:00 Thai`) +
+         usageRow('This minute', tw.thisMinute, tw.minuteLimit, `${n(tw.thisMinute)} / ${n(tw.minuteLimit)}`);
+  } else h += `<div class="s">${S.key ? 'Not available.' : 'Add your Twelve Data key first.'}</div>`;
+  h += `<div class="s">This page today: ${n(quota().n)} calls` + (rl && rl.script ? ` · Google script today: ${n(rl.script.twelveCalls)} calls` : '') + '</div>';
+  if(rl && rl.script){
+    const st = rl.script, mins = (st.ms || 0) / 60000;
+    h += '<br><b>Google Apps Script</b> <span class="s">(today; limits: Gmail · Workspace)</span>' +
+      usageRow('Timer runs', st.runs, 288, `${n(st.runs)} checks (max 288/day at 5 min)`) +
+      usageRow('Run time', mins, 90, `${mins.toFixed(1)} min / 90 min · 6 h`) +
+      usageRow('Web requests', st.fetches, 20000, `${n(st.fetches)} / 20,000 · 100,000`);
+  }
+  if(rl && rl.line){
+    const L = rl.line;
+    h += '<br><b>LINE</b> <span class="s">(this month)</span>' + (L.error ? `<div class="s">${L.error}</div>` :
+      usageRow('Messages sent', L.sentThisMonth, L.monthlyLimit, `${n(L.sentThisMonth)} / ${L.monthlyLimit == null ? 'unlimited' : n(L.monthlyLimit)}` + (rl.script ? ` · this script today: ${n(rl.script.lineSent)}` : '')));
+  } else if(!S.line.url) h += '<br><span class="s">Set up LINE alerts above to see Google Apps Script and LINE usage.</span>';
+  if(errs.length) h += `<div class="s" style="color:var(--down)">${errs.join(' · ')}</div>`;
+  body.innerHTML = h;
+  $('usageAt').textContent = 'updated ' + thai().time + ' Thai';
+}
+$('usageBtn').addEventListener('click', loadUsage);
+
+// ---------- LINE relay (Google Apps Script web app) ----------
+async function relay(action, extra){
+  if(!S.line.url) return null;
+  const r = await fetch(S.line.url, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' },   // text/plain: no CORS preflight
+    body: JSON.stringify({ secret:S.line.secret, action, ...extra }) });
+  const j = await r.json().catch(() => ({ ok:false, error:`HTTP ${r.status}` }));
+  if(!j.ok) throw new Error(j.error || 'relay error');
+  return j;
+}
+const lineMsg = (m, bad) => { const e = $('lineStatus'); e.textContent = m; e.style.color = bad ? 'var(--down)' : ''; };
+const posPayload = p => ({ price:p.price, time:p.time, targets:p.targets, cut:p.cut, cost:p.cost });
+async function relayStatus(){
+  if(!S.line.url) return lineMsg('Not set up (optional).');
+  try{
+    const j = await relay('status'), pos = j.position;
+    lineMsg(pos ? `Server watching ${usd(pos.price)} · last check ${j.lastCheck || '—'} · sent: ${Object.keys(pos.fired || {}).join(', ') || 'none'}` : 'Connected · no trade on the server');
+  }catch(e){ lineMsg('Relay error: ' + e.message, true); }
+}
+
+// Live preview of the level prices while filling in the form.
+function renderPreview(){
+  const v = id => parseFloat($(id).value), draft = { price:v('pPrice'), cost:v('pCost') || 0 };
+  if(!(draft.price > 0)){ $('posPreview').innerHTML = ''; return; }
+  const ts = [v('pT1'), v('pT2'), v('pT3')].filter(x => x > 0).sort((a,b) => a - b), cut = v('pCut');
+  $('posPreview').innerHTML = ts.map(t => `<span class="up">+${t}% → <b>${usd(levelPrice(draft, t))}</b></span>`).join('') +
+    (cut > 0 ? `<span class="down">Cut-loss −${cut}% → <b>${usd(levelPrice(draft, -cut))}</b></span>` : '');
+}
+$('posForm').addEventListener('input', e => { e.target.dataset.dirty = '1'; renderPreview(); });
+$('posForm').addEventListener('submit', async e => {
+  e.preventDefault(); primeAudio();
+  const num = id => parseFloat($(id).value);
+  const price = num('pPrice'); if(!(price > 0)) return;
+  let time = $('pTime').value.replace('T', ' ') + ':00';
+  if(thaiMs(time) > nowMs()) time = thai().dt;
+  Object.assign(prefs, { t1:num('pT1'), t2:num('pT2'), t3:num('pT3'), cut:num('pCut'), cost:num('pCost') || 0 }); savePrefs();
+  S.pos = { price, time, targets:[prefs.t1, prefs.t2, prefs.t3].sort((a,b) => a - b), cut:prefs.cut, cost:prefs.cost,
+    peak:price, peakAt:time, trough:price, troughAt:time, fired:{}, log:[] };
+  document.querySelectorAll('#posForm input').forEach(i => delete i.dataset.dirty);
+  savePos();
+  trackPosition(storedBarsSince(time));
+  renderTracker(); scheduleLive(); renderQuota();
+  if(S.line.url){ try{ await relay('set', { position:posPayload(S.pos) }); lineMsg('Trade sent to the LINE monitor ✓'); }catch(err){ lineMsg('Could not reach the LINE relay: ' + err.message, true); } }
+});
+$('posClose').addEventListener('click', async () => {
+  if(!confirm('Close this trade and stop its alerts?')) return;
+  S.pos = null; savePos(); renderTracker(); scheduleLive();
+  if(S.line.url){ try{ await relay('clear'); lineMsg('LINE monitor cleared ✓'); }catch(err){ lineMsg('Could not reach the LINE relay: ' + err.message, true); } }
+});
+$('notifBtn').addEventListener('click', async () => { primeAudio(); try{ await Notification.requestPermission(); }catch(e){} renderTracker(); });
+$('lineSave').addEventListener('click', async () => {
+  S.line = { url:$('lineUrl').value.trim(), secret:$('lineSecret').value };
+  store.set(K.line, JSON.stringify(S.line));
+  if(S.line.url && S.pos){ try{ await relay('set', { position:posPayload(S.pos) }); }catch(e){} }
+  relayStatus(); renderQuota();
+});
+$('lineTest').addEventListener('click', async () => {
+  if(!S.line.url) return lineMsg('Enter the web app URL and secret, then Save.', true);
+  lineMsg('Sending…');
+  try{ await relay('test'); lineMsg('Test message sent — check LINE ✓'); }catch(e){ lineMsg('Test failed: ' + e.message, true); }
+});
+$('pollSel').addEventListener('change', e => { prefs.poll = +e.target.value; savePrefs(); scheduleLive(); });
+document.addEventListener('pointerdown', primeAudio, { once:true });
+
+// ---------- UI ----------
+function renderTabs(){
+  document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === prefs.tab));
+  $('tabTv').classList.toggle('hide', prefs.tab !== 'tv');
+  $('tabFc').classList.toggle('hide', prefs.tab !== 'fc');
+  $('tabTrk').classList.toggle('hide', prefs.tab !== 'trk');
+  $('subtitle').textContent = ({ tv:'Live chart by TradingView', fc:'1–2 day buy/sell forecast from 5-minute history', trk:'Trade Tracker: take-profit and cut-loss alerts' })[prefs.tab] + ' · Thai time (UTC+7)';
+  $('pollSel').value = prefs.poll;
+  document.querySelectorAll('#themeSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === prefs.theme));
+  document.querySelectorAll('#refSeg button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.v === prefs.ref));
+  document.querySelectorAll('#unitSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === prefs.unit));
+  $('wdChk').checked = prefs.weekday; $('rangeChk').checked = prefs.showRange; $('symSel').value = prefs.symbol;
+  if(prefs.tab === 'tv' && (!S.tvMounted || S.tvDirty)) mountTv();
+}
+function setTab(tab){
+  prefs.tab = tab; savePrefs(); renderTabs(); refresh();
+  if(S.key) sync();
+  if(tab === 'trk') relayStatus();
+  scheduleLive();
+}
+document.querySelector('.tabs').addEventListener('click', e => { const b = e.target.closest('button'); if(b && b.dataset.tab !== prefs.tab) setTab(b.dataset.tab); });
+$('themeSeg').addEventListener('click', e => {
+  const b = e.target.closest('button'); if(!b) return;
+  prefs.theme = b.dataset.v; savePrefs(); applyTheme(); S.tvDirty = true; renderTabs(); themeChart(); if(prefs.tab === 'fc') refresh();
+});
+$('symSel').addEventListener('change', e => { prefs.symbol = e.target.value; savePrefs(); S.tvDirty = true; renderTabs(); });
+$('refSeg').addEventListener('click', e => {
+  const b = e.target.closest('button'); if(!b) return;
+  prefs.ref = +b.dataset.v; savePrefs(); renderTabs(); refresh();
+  if(S.meta.oldestBar && S.meta.oldestBar.slice(0,10) > targetDate() && !S.meta.limitReached) sync();   // fetch older days if needed
+});
+$('wdChk').addEventListener('change', e => { prefs.weekday = e.target.checked; savePrefs(); refresh(); });
+$('cards').addEventListener('click', e => {
+  const bt = e.target.closest('#btSeg button');
+  if(bt){ prefs.btDays = +bt.dataset.v; savePrefs(); refresh();
+    if(S.meta.oldestBar && S.meta.oldestBar.slice(0,10) > targetDate() && !S.meta.limitReached) sync(); return; }
+  const use = e.target.closest('[data-use-ref]');
+  if(use){ prefs.ref = +use.dataset.useRef; prefs.weekday = use.dataset.useWd === '1'; savePrefs(); renderTabs(); refresh(); }
+});
+$('rangeChk').addEventListener('change', e => { prefs.showRange = e.target.checked; savePrefs(); draw(true); });
+$('barSeg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; prefs.bar = b.dataset.v === 'auto' ? 'auto' : +b.dataset.v; savePrefs(); draw(true); });
+$('unitSeg').addEventListener('click', e => { const b = e.target.closest('button'); if(!b) return; prefs.unit = b.dataset.v; savePrefs(); renderTabs(); draw(true); });
+$('nowBtn').addEventListener('click', () => {
+  if(!S.chart || !S.maps.candle) return;
+  const keys = [...S.maps.candle.keys()], last = keys[keys.length-1];
+  const projEnd = S.fc && S.fc.pts.length ? S.fc.pts[S.fc.pts.length-1].t : last + 6*3600;
+  const logStart = S.maps.log && S.maps.log.size ? Math.min(...S.maps.log.keys()) : last - 26*3600;
+  S.chart.timeScale().setVisibleRange({ from:logStart - 2*3600, to:projEnd });
+});
+$('keyform').addEventListener('submit', e => {
+  e.preventDefault(); const v = $('keyin').value.trim(); if(!v) return;
+  S.key = v; store.set(K.key, v); $('keyin').value = ''; S.status = 'idle'; refresh(); sync(); scheduleLive();
+});
+$('changeKey').addEventListener('click', e => { e.preventDefault(); clearTimeout(S.timer); store.del(K.key); S.key = null; refresh(); });
+document.addEventListener('visibilitychange', () => {
+  if(!wantLive()){ clearTimeout(S.timer); S.timer = null; renderHeader(); }
+  else { scheduleLive(); if(!document.hidden && S.key && nowMs() - S.meta.checkedAt > 30*60e3) sync(); }
+});
+darkMQ.addEventListener('change', () => { if(prefs.theme === 'auto'){ S.tvDirty = true; renderTabs(); themeChart(); if(prefs.tab === 'fc') refresh(); } });
+
+async function boot(){
+  applyTheme();
+  await loadStore();
+  store.del('ghv2.draw');   // drawings were removed
+  renderTabs(); refresh();
+  if(S.key) sync();
+  if(prefs.tab === 'trk') relayStatus();
+  scheduleLive();
+}
+window.GH = { S, prefs, latestAt, tradingShift, forecast, computeOdds, clearOdds(){ oddsCache.key = ''; caseCache.clear(); }, buildCases, oddsFrom, binomTail, verdict, scanSettings, resetScan(){ scanCache.key = ''; }, refresh, sync, liveTick, ingest, forecast, draw, trackPosition, relay, setNow(ms){ S.fakeNow = ms; }, setApi(fn){ S.apiOverride = fn; },
+  async wipe(){ S.days.clear(); Object.assign(S.meta, { lastBar:null, oldestBar:null, checkedAt:0, backfillDone:false, limitReached:false, holeStart:null, holeEnd:null });
+    await idb('days','readwrite', st => { st.clear(); }); await idb('meta','readwrite', st => { st.clear(); }); } };
+boot();
+})();
+</script>
+</body>
+</html>
