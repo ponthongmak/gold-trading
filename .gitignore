@@ -2,3 +2,5 @@ research/.venv/
 research/data/
 __pycache__/
 .DS_Store
+research/cache_site_fc.npz
+research/datasets/

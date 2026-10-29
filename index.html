@@ -276,7 +276,7 @@ footer a{color:var(--muted)}
 
     <div class="note" id="fcNote">
       Candles = actual 5-minute prices (re-grouped as you zoom; weekends and the daily 1-hour break are left out). <b style="color:var(--proj)">Purple line</b>: over the <b>last 5 trading days</b> it shows, for each day, what the forecast predicted 24 trading hours earlier (compare it with the candles);
-      from now on it is the forecast for the next 48 trading hours, drawn by the model in use (see <b>Forecast model</b>: every model is re-fitted daily and the one with the smallest past error is used). The darker band = 80% of that model's past errors, the lighter band = 95% (if enabled).
+      from now on it is the forecast for the next 48 trading hours, drawn by the model in use (see <b>Forecast model</b>: every model is re-fitted daily and the one with the smallest past error is used). The darker band = the 80% price range, the lighter band = 95% (if Wide band is on): a GARCH volatility forecast, scaled by how active each hour of the day usually is and calibrated on the model's errors over the last 20 trading days (until about a month of history is stored: 80% / 95% of that model's past errors).
       Blue = best/2nd-best <b>buy</b> hours, orange = <b>sell</b> hours, picked from the typical intraday pattern of the chosen period; the small boxes are the price zones.
       <b>Buy ≈</b> = the typical lowest price within that hour on similar past days (a limit order there filled on about half of days); zone = the middle half of those lows. <b>Sell ≈</b> = the typical highest price within the hour; zone = the middle half of those highs.
       It is a statistical guide, not financial advice.
@@ -694,7 +694,8 @@ function forecast(opts = {}){
     const m = anchor + slope*k, P = v => m*(1 + v/100);
     pts.push({ t:wallSec(ms), date:th.date, k, s:th.slot, h:open/12, rel:st.med, price:P(st.med), tp:P(st.med), q1:P(st.q1), q3:P(st.q3), min:P(st.min), max:P(st.max) });
   }
-  // The selected model (see retrainAndSelect) sets the price path and its range (from its own past errors).
+  // The selected model (see retrainAndSelect) sets the price path; its range comes from garchBand (GARCH volatility,
+  // calibrated on that model's recent errors), or from its own past error quantiles until enough history is stored.
   // The daily pattern above still sets the timing of the buy / sell hours (field tp).
   const MS = S.model && S.model.row, H = MS ? hourly() : null;
   let modelUsed = null;
@@ -703,7 +704,10 @@ function forecast(opts = {}){
     const pr = predict(parseModel(MS.id), H, j, { price:L.price, date:L.date, s0:L.s, frozen:S.model.params }, pts.map(p => ({ h:p.h, s:p.s, k:p.k })));
     if(pr){
       modelUsed = MS.id;
-      pts.forEach((p, i) => { const e8 = errAt(MS.e80, p.h), e9 = errAt(MS.e95, p.h);
+      const gb = garchBand(H, j, MS.id, S.model.params, pts.map(p => ({ h:p.h, s:p.s })), pr);   // null: not enough history yet
+      pts.forEach((p, i) => {
+        if(gb){ Object.assign(p, { price:pr[i], q1:gb[i].lo80, q3:gb[i].hi80, min:gb[i].lo95, max:gb[i].hi95 }); return; }
+        const e8 = errAt(MS.e80, p.h), e9 = errAt(MS.e95, p.h);
         Object.assign(p, { price:pr[i], q1:pr[i] - e8, q3:pr[i] + e8, min:pr[i] - e9, max:pr[i] + e9 }); });
     }
   }
@@ -1108,6 +1112,73 @@ async function updateModels(){
 function errAt(arr, h){
   if(!arr) return 0; const i = Math.min(MH, Math.max(1, Math.ceil(h)));
   const v = arr[i] ?? 0; return h > MH ? v*Math.sqrt(h/MH) : v;
+}
+
+// ---------- Range band: GARCH(1,1) volatility × the usual activity of each hour of day ----------
+// Replaces the error-quantile band when enough history is stored (research/experiment_new_methods.py: on Jul–Oct 2026
+// the 95% band held 95.4% of outcomes vs 91.8%, with a 13% lower interval score). GARCH is fitted once per trading day
+// on the 120 trading days before it (Gaussian quasi-likelihood, grid search, variance targeting), after dividing each
+// hourly return by its hour-of-day volatility (last 60 days). The band multiplier is the 80% / 95% quantile of the
+// chosen model's |log error| / predicted sd over the 20 trading days before, so the band is calibrated to that model.
+const G_DAYS = 120, G_SEAS = 60, G_CAL = 20, G_MIN_RET = 300, G_MIN_Z = 200;
+function tradingDates(H){
+  if(!H.tdays){ const cnt = new Map(); H.date.forEach(d => cnt.set(d, (cnt.get(d) || 0) + 1)); H.tdays = [...cnt.keys()].filter(d => cnt.get(d) >= 6); }
+  return H.tdays;
+}
+const hourOf = (H, i) => Math.floor(H.slot[i]/12);
+function garchFit(H, date){
+  const key = 'garch|' + date; if(H.fits.has(key)) return H.fits.get(key);
+  const td = tradingDates(H); let k = td.findIndex(d => d >= date); if(k < 0) k = td.length;
+  const lo = idxOfDate(H, td[Math.max(0, k - G_DAYS)] || date), hi = idxOfDate(H, date), lo60 = idxOfDate(H, td[Math.max(0, k - G_SEAS)] || date);
+  let f = null;
+  if(hi - lo > G_MIN_RET){
+    const sum = new Array(24).fill(0), n = new Array(24).fill(0); let all = 0, na = 0;
+    for(let i = Math.max(lo60, 1); i < hi; i++){ const r = H.ly[i] - H.ly[i-1], h = hourOf(H, i); sum[h] += r*r; n[h]++; all += r*r; na++; }
+    const base = all/na, seas = sum.map((s, h) => 0.8*(n[h] > 10 ? s/n[h]/base : 1) + 0.2);
+    const u = []; for(let i = Math.max(lo, 1); i < hi; i++) u.push((H.ly[i] - H.ly[i-1])/Math.sqrt(seas[hourOf(H, i)])*100);
+    const V = u.reduce((a, x) => a + x*x, 0)/u.length;
+    const nll = (a, b) => { const w = V*(1 - a - b); let s2 = V, L = 0; for(const x of u){ L += Math.log(s2) + x*x/s2; s2 = w + a*x*x + b*s2; } return L; };
+    let best = { a:.05, b:.9, L:Infinity };
+    const scan = (a0, a1, b0, b1, st) => { for(let a = a0; a <= a1 + 1e-9; a += st) for(let b = b0; b <= b1 + 1e-9; b += st){
+      if(a <= 0 || b <= 0 || a + b >= 0.995) continue; const L = nll(a, b); if(L < best.L) best = { a, b, L }; } };
+    scan(.02, .3, .6, .98, .02); scan(best.a - .02, best.a + .02, best.b - .02, best.b + .02, .005);
+    const { a, b } = best, w = V*(1 - a - b);
+    let s2 = V; for(const x of u) s2 = w + a*x*x + b*s2;                 // variance of the first return of `date`
+    f = { a, b, w, V, seas, s2, hi };
+  }
+  H.fits.set(key, f); return f;
+}
+// Predicted sd of the log price change at each target ({h: trading hours ahead, s: slot}), made at hourly index j.
+function garchSd(H, j, targets){
+  const p = garchFit(H, H.date[j]); if(!p || j < p.hi) return null;
+  let s2 = p.s2;
+  for(let i = p.hi; i <= j; i++){ const x = (H.ly[i] - H.ly[i-1])/Math.sqrt(p.seas[hourOf(H, i)])*100; s2 = p.w + p.a*x*x + p.b*s2; }
+  const ab = p.a + p.b, ev = k => p.V + Math.pow(ab, k - 1)*(s2 - p.V);   // expected variance k hours ahead
+  const ord = targets.map((g, i) => i).sort((x, y) => targets[x].h - targets[y].h), out = new Array(targets.length);
+  let v = 0, hp = 0;
+  for(const i of ord){ const g = targets[i]; v += (g.h - hp)*p.seas[Math.floor(g.s/12)]*ev(Math.max(1, Math.ceil(g.h))); hp = g.h; out[i] = Math.sqrt(v)/100; }
+  return out;
+}
+// Band multipliers for model `id` on `date`: quantiles of |log(actual / forecast)| / sd over the 20 trading days before.
+function garchCal(H, date, id, frozen){
+  const key = 'gcal|' + date + '|' + id; if(H.fits.has(key)) return H.fits.get(key);
+  const td = tradingDates(H), k = td.findIndex(d => d >= date), cut = idxOfDate(H, date), M = parseModel(id), z = [];
+  if(k >= G_CAL) for(let j = idxOfDate(H, td[k - G_CAL]); j < cut - 1; j++){
+    const tg = []; let kk = 0;
+    for(let h = 1; h <= MH && j + h < cut; h++){ if(H.date[j+h] !== H.date[j+h-1]) kk++; tg.push({ h, s:H.slot[j+h], k:kk }); }
+    if(!tg.length) continue;
+    const f = predict(M, H, j, { price:H.y[j], date:H.date[j], s0:H.slot[j], frozen }, tg), sd = f && garchSd(H, j, tg);
+    if(!sd) continue;
+    tg.forEach((g, i) => { if(f[i] > 0 && sd[i] > 0) z.push(Math.abs(H.ly[j + g.h] - Math.log(f[i]))/sd[i]); });
+  }
+  const c = z.length >= G_MIN_Z ? { q80:quantile(z, .8), q95:quantile(z, .95), n:z.length } : null;
+  H.fits.set(key, c); return c;
+}
+// {lo80, hi80, lo95, hi95} per target around the forecast `pr`, or null (then the error-quantile band is used).
+function garchBand(H, j, id, frozen, targets, pr){
+  const c = garchCal(H, H.date[j], id, frozen), sd = c && garchSd(H, j, targets);
+  if(!sd) return null;
+  return targets.map((g, i) => ({ lo80:pr[i]*Math.exp(-c.q80*sd[i]), hi80:pr[i]*Math.exp(c.q80*sd[i]), lo95:pr[i]*Math.exp(-c.q95*sd[i]), hi95:pr[i]*Math.exp(c.q95*sd[i]) }));
 }
 
 // ---------- Target-hit odds: "if I buy now, which level is touched first within 48 h?" ----------
@@ -1599,7 +1670,7 @@ function modelCard(){
     `<div class="s">Last updated ${at.date.slice(8)}/${at.date.slice(5,7)} ${at.time} (${age === 0 ? 'today' : age + ' day' + (age > 1 ? 's' : '') + ' ago'}): every model was fitted on each training period (1 week to 6 months). <b>Test</b> = the last ${TEST_DAYS} trading days ` +
     `(${m.from.slice(8)}/${m.from.slice(5,7)} → ${m.to.slice(8)}/${m.to.slice(5,7)}, ${m.origins} hourly forecasts, 1–24 trading hours ahead, only earlier data used); ` +
     `Auto chose on the ${VAL_DAYS} trading days before (${m.valFrom.slice(8)}/${m.valFrom.slice(5,7)} → ${m.valTo.slice(8)}/${m.valTo.slice(5,7)}), so the test days did not influence it. Fitted settings stay fixed until you press <b>Update models</b> (about once a month); new prices still move the forecast.` +
-    ` The chosen model draws the purple line and its band (80% of its past errors); buy/sell hours come from the daily pattern.</div></div>`;
+    ` The chosen model draws the purple line; its band is the 80% range from GARCH volatility, calibrated on that model's errors over the last ${G_CAL} trading days; buy/sell hours come from the daily pattern.</div></div>`;
 }
 function renderPanels(){
   renderModelBar();
